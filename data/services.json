@@ -1,0 +1,147 @@
+{
+  "services": [
+    {
+      "id": "frontend",
+      "owner_team": "platform-team",
+      "dependencies": [
+        "cart-service",
+        "product-catalog-service",
+        "currency-service",
+        "checkout-service",
+        "recommendation-service",
+        "ad-service",
+        "shipping-service"
+      ],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Go",
+      "alert_threshold": "high"
+    },
+    {
+      "id": "cart-service",
+      "owner_team": "cart-team",
+      "dependencies": ["redis-cart"],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "C#",
+      "alert_threshold": "high"
+    },
+    {
+      "id": "product-catalog-service",
+      "owner_team": "catalog-team",
+      "dependencies": [],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Go",
+      "alert_threshold": "medium"
+    },
+    {
+      "id": "currency-service",
+      "owner_team": "platform-team",
+      "dependencies": [],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Node.js",
+      "alert_threshold": "medium"
+    },
+    {
+      "id": "payment-service",
+      "owner_team": "payments-team",
+      "dependencies": ["stripe-api"],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Node.js",
+      "alert_threshold": "critical"
+    },
+    {
+      "id": "shipping-service",
+      "owner_team": "fulfillment-team",
+      "dependencies": [],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Go",
+      "alert_threshold": "high"
+    },
+    {
+      "id": "email-service",
+      "owner_team": "notifications-team",
+      "dependencies": ["sendgrid-api"],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Python",
+      "alert_threshold": "medium"
+    },
+    {
+      "id": "checkout-service",
+      "owner_team": "checkout-team",
+      "dependencies": [
+        "cart-service",
+        "product-catalog-service",
+        "currency-service",
+        "payment-service",
+        "shipping-service",
+        "email-service"
+      ],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Go",
+      "alert_threshold": "critical"
+    },
+    {
+      "id": "recommendation-service",
+      "owner_team": "ml-team",
+      "dependencies": ["product-catalog-service"],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Python",
+      "alert_threshold": "low"
+    },
+    {
+      "id": "ad-service",
+      "owner_team": "marketing-team",
+      "dependencies": [],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Java",
+      "alert_threshold": "low"
+    },
+    {
+      "id": "load-generator",
+      "owner_team": "platform-team",
+      "dependencies": ["frontend"],
+      "repo": "googlecloudplatform/microservices-demo",
+      "language": "Python",
+      "alert_threshold": "low"
+    }
+  ],
+  "teams": [
+    {
+      "id": "platform-team",
+      "oncall_slack": "#platform-oncall"
+    },
+    {
+      "id": "cart-team",
+      "oncall_slack": "#cart-oncall"
+    },
+    {
+      "id": "catalog-team",
+      "oncall_slack": "#catalog-oncall"
+    },
+    {
+      "id": "payments-team",
+      "oncall_slack": "#payments-oncall"
+    },
+    {
+      "id": "fulfillment-team",
+      "oncall_slack": "#fulfillment-oncall"
+    },
+    {
+      "id": "notifications-team",
+      "oncall_slack": "#notifications-oncall"
+    },
+    {
+      "id": "checkout-team",
+      "oncall_slack": "#checkout-oncall"
+    },
+    {
+      "id": "ml-team",
+      "oncall_slack": "#ml-oncall"
+    },
+    {
+      "id": "marketing-team",
+      "oncall_slack": "#marketing-oncall"
+    }
+  ],
+  "external_apis": ["stripe-api", "sendgrid-api"],
+  "databases": ["redis-cart"]
+}
