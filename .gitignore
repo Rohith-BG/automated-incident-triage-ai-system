@@ -1,2 +1,13 @@
 .kiro
 .env
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.log
+.agents
+AGENTS.md
+.vscode/
+data/*
+!data/services.json
+triage.db
