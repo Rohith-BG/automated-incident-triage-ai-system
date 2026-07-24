@@ -1,23 +1,23 @@
-import asyncio
+"""Integration tests for /alerts/webhook (backwards-compatible route)."""
+
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from unittest.mock import AsyncMock, patch
 
-from agents.orchestrator import InvestigationState
 from agents.llm.base import LLMResponse
+from backend.app.core.database import AsyncSessionLocal, Base, engine
+from backend.app.enums import IncidentStatus
 from backend.app.main import app
-from backend.app.models.incident import Incident, Alert, RootCauseReportModel
-from backend.app.core.database import Base, engine, AsyncSessionLocal
+from backend.app.models.incident import Alert, Incident
 
 client = TestClient(app)
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def clean_database():
-    """Fixture to drop and recreate database tables before each test."""
+    """Drop and recreate tables for every test."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -28,8 +28,8 @@ async def clean_database():
 
 @pytest_asyncio.fixture(autouse=True)
 async def mock_llm_adapter():
-    """Fixture to mock LLM calls globally for all tests in this module."""
-    mock_llm_response = LLMResponse(
+    """Mock LLM globally so orchestrator runs don't hit real APIs."""
+    mock_response = LLMResponse(
         content="""{
             "root_cause": "Mocked Redis failure.",
             "evidence_summary": "Errors in cart-service log.",
@@ -37,17 +37,24 @@ async def mock_llm_adapter():
             "remediation_steps": ["Restart Redis container."],
             "confidence_score": 0.95
         }""",
-        usage={"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        usage={
+            "prompt_tokens": 10,
+            "completion_tokens": 10,
+            "total_tokens": 20,
+        },
     )
     mock_llm = AsyncMock()
-    mock_llm.generate.return_value = mock_llm_response
-    with patch("agents.orchestrator.graph.create_llm_adapter", return_value=mock_llm):
+    mock_llm.generate.return_value = mock_response
+    with patch(
+        "agents.orchestrator.graph.create_llm_adapter",
+        return_value=mock_llm,
+    ):
         yield mock_llm
 
 
 @pytest.mark.asyncio
 async def test_alert_webhook_creates_new_incident() -> None:
-    # 1. Post a new alert
+    """POST /alerts/webhook creates a new incident via controller layer."""
     response = client.post(
         "/alerts/webhook",
         json={
@@ -59,38 +66,41 @@ async def test_alert_webhook_creates_new_incident() -> None:
     assert response.status_code == 202
     data = response.json()
     assert data["success"] is True
-    assert data["status"] == "investigating"
+    assert data["status"] == IncidentStatus.INVESTIGATING
     assert data["is_duplicate"] is False
     incident_id = data["incident_id"]
     assert incident_id is not None
 
-    # 2. Verify it's created and processed in the DB
-    # Note: TestClient runs background tasks synchronously, so status will be 'completed'
+    # Verify in DB (TestClient runs bg tasks synchronously)
     async with AsyncSessionLocal() as session:
         stmt = select(Incident).where(Incident.id == incident_id)
         result = await session.execute(stmt)
         incident = result.scalars().first()
         assert incident is not None
         assert incident.service_id == "cart-service"
-        assert incident.status == "completed"
+        assert incident.status == IncidentStatus.COMPLETED
         assert len(incident.alerts) == 1
-        assert incident.alerts[0].alert_message == "Redis connection lost: ECONNREFUSED"
+        assert (
+            incident.alerts[0].alert_message
+            == "Redis connection lost: ECONNREFUSED"
+        )
 
 
 @pytest.mark.asyncio
 async def test_alert_webhook_deduplicates_active_incident() -> None:
-    # 1. Manually insert an active incident into the DB
+    """Duplicate alert for same active service returns is_duplicate=True."""
+    # Manually insert an active incident
     async with AsyncSessionLocal() as session:
         active_incident = Incident(
             service_id="cart-service",
-            status="investigating",
+            status=IncidentStatus.INVESTIGATING,
         )
         session.add(active_incident)
         await session.commit()
         await session.refresh(active_incident)
         inc1_id = active_incident.id
 
-    # 2. Post alert for the same service (should deduplicate)
+    # Post alert for the same service
     resp2 = client.post(
         "/alerts/webhook",
         json={
@@ -105,19 +115,22 @@ async def test_alert_webhook_deduplicates_active_incident() -> None:
     assert data2["incident_id"] == inc1_id
     assert data2["is_duplicate"] is True
 
-    # 3. Verify alerts in DB are grouped under the active incident
+    # Verify alert attached
     async with AsyncSessionLocal() as session:
         stmt = select(Incident).where(Incident.id == inc1_id)
         result = await session.execute(stmt)
         incident = result.scalars().first()
         assert incident is not None
         assert len(incident.alerts) == 1
-        assert incident.alerts[0].alert_message == "Redis read timeout error"
+        assert (
+            incident.alerts[0].alert_message
+            == "Redis read timeout error"
+        )
 
 
 @pytest.mark.asyncio
 async def test_alert_webhook_triggers_orchestrator() -> None:
-    # Post alert
+    """New alert triggers orchestrator and saves report."""
     response = client.post(
         "/alerts/webhook",
         json={
@@ -128,13 +141,12 @@ async def test_alert_webhook_triggers_orchestrator() -> None:
     assert response.status_code == 202
     incident_id = response.json()["incident_id"]
 
-    # Verify background task results
     async with AsyncSessionLocal() as session:
         stmt = select(Incident).where(Incident.id == incident_id)
         result = await session.execute(stmt)
         incident = result.scalars().first()
         assert incident is not None
-        assert incident.status == "completed"
+        assert incident.status == IncidentStatus.COMPLETED
         assert incident.report is not None
         assert incident.report.root_cause == "Mocked Redis failure."
         assert incident.report.confidence_score == 0.95

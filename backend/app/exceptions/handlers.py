@@ -1,5 +1,6 @@
 import logging
 from http import HTTPStatus
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,7 +23,7 @@ class ExceptionHandlerRegistry:
     async def handle_app_exception(
         self,
         request: Request,
-        exc: AppException,
+        exc: Any,
     ) -> JSONResponse:
         self._log_app_exception(request, exc)
 
@@ -35,7 +36,7 @@ class ExceptionHandlerRegistry:
     async def handle_http_exception(
         self,
         request: Request,
-        exc: StarletteHTTPException,
+        exc: Any,
     ) -> JSONResponse:
         status_code = HTTPStatus(exc.status_code)
         message = exc.detail if isinstance(exc.detail, str) else status_code.phrase
@@ -49,7 +50,7 @@ class ExceptionHandlerRegistry:
     async def handle_validation_error(
         self,
         request: Request,
-        exc: RequestValidationError,
+        exc: Any,
     ) -> JSONResponse:
         logger.info(
             "Request validation failed.",
