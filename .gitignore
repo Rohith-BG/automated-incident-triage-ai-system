@@ -11,3 +11,4 @@ AGENTS.md
 data/*
 !data/services.json
 triage.db
+implementation_plan.md
