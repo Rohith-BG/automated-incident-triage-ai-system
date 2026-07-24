@@ -29,8 +29,10 @@ class AgentSettings(BaseSettings):
 
     # ── Swappable-component selectors (§4 of AGENTS.md) ─
     KG_BACKEND: Literal["in_memory", "neo4j"] = "in_memory"
-    LOG_BACKEND: Literal["mock", "loki"] = "mock"
-    METRICS_BACKEND: Literal["mock", "prometheus"] = "mock"
+    OBSERVABILITY_BACKEND: Literal["mock", "cloudwatch"] = "mock"
+    DEPLOY_BACKEND: Literal["mock", "github"] = "mock"
+    INCIDENT_KNOWLEDGE_BACKEND: Literal["mock", "db"] = "mock"
+    CODE_DIFF_BACKEND: Literal["mock", "github"] = "mock"
     LLM_PROVIDER: Literal[
         "google", "openai", "anthropic", "local"
     ] = "google"
@@ -41,8 +43,12 @@ class AgentSettings(BaseSettings):
 
     # ── LLM ──────────────────────────────────────────────
     GOOGLE_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "gemini-2.0-flash"
+    LLM_MODEL: str = "gemini-2.5-flash"
+    LLM_FALLBACK_MODEL: str = "gpt-4o"
+    LLM_ESCALATION_MODEL: str = "claude-opus-4"
     LLM_BASE_URL: Optional[str] = None
     LLM_TIMEOUT_SECONDS: int = 60
     LLM_MAX_RETRIES: int = 2
@@ -54,16 +60,21 @@ class AgentSettings(BaseSettings):
     NEO4J_PASSWORD: str = "password"
     SERVICES_JSON_PATH: Path = PROJECT_ROOT / "data" / "services.json"
 
-    # ── MCP Server addresses ─────────────────────────────
-    MCP_LOGS_URL: str = "http://localhost:8001"
-    MCP_METRICS_URL: str = "http://localhost:8003"
-    MCP_CODE_DIFF_URL: str = "http://localhost:8005"
+    # ── AWS & SQS ─────────────────────────────────────────
+    AWS_REGION: str = "us-east-1"
+    CLOUDWATCH_LOG_GROUP_PREFIX: str = "/ecs"
+    DEPLOY_SQS_QUEUE_URL: Optional[str] = None
+    DEPLOY_SQS_DLQ_URL: Optional[str] = None
+
+    # ── GitHub ───────────────────────────────────────────
+    GITHUB_TOKEN: Optional[str] = None
+    GITHUB_API_BASE_URL: str = "https://api.github.com"
 
     # ── Orchestrator ─────────────────────────────────────
     CONFIDENCE_THRESHOLD: float = 0.6
     TOOL_TIMEOUT_SECONDS: int = 30
     TOOL_MAX_RETRIES: int = 2
-    DEDUP_WINDOW_SECONDS: int = 300  # 5 min
+
 
     # ── Evaluation & Tracing ─────────────────────────────
     TRACING_ENABLED: bool = True

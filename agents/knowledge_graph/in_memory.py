@@ -6,6 +6,7 @@ graph. Used for MVP / dev mode. Swap to Neo4j by changing
 KG_BACKEND env var — zero code change in consumers.
 """
 
+import asyncio
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Any
 
 
 class InMemoryGraphStore:
-    """Dict-based knowledge graph backed by services.json."""
+    """Dict-based knowledge graph backed by services.json with mutation lock for dev mode."""
 
     def __init__(self, services_json_path: Path) -> None:
         """Load and index the services graph.
@@ -21,6 +22,7 @@ class InMemoryGraphStore:
         Args:
             services_json_path: Absolute path to services.json.
         """
+        self._lock = asyncio.Lock()
         with open(services_json_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
 
@@ -42,11 +44,11 @@ class InMemoryGraphStore:
             raw.get("databases", [])
         )
 
-        # Build reverse dependency index:
-        # dependents_map[X] = list of services that depend on X
-        self._dependents_map: dict[str, list[str]] = defaultdict(
-            list
-        )
+        self._rebuild_dependents_map()
+
+    def _rebuild_dependents_map(self) -> None:
+        """Rebuild reverse dependency index."""
+        self._dependents_map: dict[str, list[str]] = defaultdict(list)
         for svc_id, svc in self._services.items():
             for dep in svc.get("dependencies", []):
                 self._dependents_map[dep].append(svc_id)
@@ -79,14 +81,7 @@ class InMemoryGraphStore:
     async def get_blast_radius(
         self, service_id: str
     ) -> list[str]:
-        """BFS upward: service + all transitive dependents.
-
-        Example: if payment-service is down →
-          checkout-service depends on it →
-          frontend depends on checkout-service →
-          blast radius = [payment-service, checkout-service,
-                          frontend, load-generator]
-        """
+        """BFS upward: service + all transitive dependents."""
         visited: set[str] = set()
         queue: list[str] = [service_id]
 
@@ -95,7 +90,6 @@ class InMemoryGraphStore:
             if current in visited:
                 continue
             visited.add(current)
-            # Only traverse upward through known services
             for dependent in self._dependents_map.get(
                 current, []
             ):
@@ -130,3 +124,66 @@ class InMemoryGraphStore:
         """Return the GitHub repo slug for a service."""
         svc = await self.get_service_info(service_id)
         return svc.get("repo", "")
+
+    # ── Write Mutation Methods ─────────────────────────────
+
+    async def add_dependency(self, from_id: str, to_id: str) -> None:
+        """Add a dependency edge from_id -> to_id."""
+        async with self._lock:
+            if from_id in self._services:
+                deps = self._services[from_id].setdefault("dependencies", [])
+                if to_id not in deps:
+                    deps.append(to_id)
+                self._rebuild_dependents_map()
+
+    async def remove_dependency(self, from_id: str, to_id: str) -> None:
+        """Remove a dependency edge from_id -> to_id."""
+        async with self._lock:
+            if from_id in self._services:
+                deps = self._services[from_id].get("dependencies", [])
+                if to_id in deps:
+                    deps.remove(to_id)
+                self._rebuild_dependents_map()
+
+    async def add_node(self, node_id: str, metadata: dict[str, Any]) -> None:
+        """Add or update a service node in dev graph."""
+        async with self._lock:
+            if node_id not in self._services:
+                self._services[node_id] = {
+                    "id": node_id,
+                    "owner_team": metadata.get("owner_team", "platform-team"),
+                    "dependencies": metadata.get("dependencies", []),
+                    "repo": metadata.get("repo", ""),
+                    "language": metadata.get("language", "Python"),
+                    "alert_threshold": metadata.get("alert_threshold", "medium"),
+                }
+            else:
+                self._services[node_id].update(metadata)
+            self._rebuild_dependents_map()
+
+    async def update_metadata(self, node_id: str, field: str, value: Any) -> None:
+        """Update property on dev node."""
+        async with self._lock:
+            if node_id in self._services:
+                self._services[node_id][field] = value
+
+    async def apply_mutations(self, mutations: list[dict[str, Any]]) -> dict[str, Any]:
+        """Apply batch mutations to dev graph."""
+        applied = 0
+        errors = []
+        for m in mutations:
+            action = m.get("action")
+            try:
+                if action == "add_dependency":
+                    await self.add_dependency(m["from"], m["to"])
+                elif action == "remove_dependency":
+                    await self.remove_dependency(m["from"], m["to"])
+                elif action == "add_node":
+                    await self.add_node(m["node"], m.get("metadata", {}))
+                elif action == "update_metadata":
+                    await self.update_metadata(m["node"], m["field"], m["value"])
+                applied += 1
+            except Exception as e:
+                errors.append(str(e))
+        return {"applied": applied, "errors": errors}
+

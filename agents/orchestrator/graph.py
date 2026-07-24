@@ -1,18 +1,20 @@
 """
 LangGraph orchestrator definition.
 
-Wires together the nodes (intake, knowledge_graph_query, parallel_investigation,
-synthesize, confidence_gate) to execute the incident triage pipeline.
+Wires together the nodes (intake, knowledge_graph_query, observability_investigation,
+deploy_investigation, incident_knowledge_code_diff, synthesize, confidence_gate)
+to execute the incident triage pipeline.
 """
 
 import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, Callable, Optional, Union
 
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
 from agents.config import agent_settings
 from agents.knowledge_graph.factory import create_kg_store
@@ -24,6 +26,7 @@ from agents.orchestrator.prompts import (
     SYNTHESIZER_USER_TEMPLATE,
 )
 from agents.orchestrator.state import InvestigationState, RootCauseReport
+from agents.tracing import global_trace_recorder
 
 logger = logging.getLogger(__name__)
 
@@ -55,23 +58,37 @@ async def notify_progress(
             logger.error(f"Error executing progress callback: {e}")
 
 
-# ── Retry logic helper ───────────────────────────────────────────────────
+# ── Helper for MCP tool calls with retry & tracing ────────────────────────
 
 
-async def _call_tool_with_retry(
+async def _call_mcp_tool(
     client: Any,
     server: str,
     tool_name: str,
     arguments: dict[str, Any],
+    incident_id: str,
+    agent_name: str,
     max_retries: int = 2,
 ) -> Any:
-    """Call an MCP tool with exponential backoff retries."""
+    """Call an MCP tool with exponential backoff retries and trace recording."""
+    start_time = time.perf_counter()
     last_error = None
     for attempt in range(1, max_retries + 2):
         try:
-            return await client.call_tool(
+            res = await client.call_tool(
                 server=server, tool_name=tool_name, arguments=arguments
             )
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            global_trace_recorder.record(
+                incident_id=incident_id,
+                agent=agent_name,
+                tool=f"{server}.{tool_name}",
+                input_data=arguments,
+                output_data=res,
+                latency_ms=latency_ms,
+                success=True,
+            )
+            return res
         except Exception as e:
             last_error = e
             logger.warning(
@@ -79,6 +96,18 @@ async def _call_tool_with_retry(
             )
             if attempt <= max_retries:
                 await asyncio.sleep(2**attempt)
+
+    latency_ms = (time.perf_counter() - start_time) * 1000
+    global_trace_recorder.record(
+        incident_id=incident_id,
+        agent=agent_name,
+        tool=f"{server}.{tool_name}",
+        input_data=arguments,
+        output_data=None,
+        latency_ms=latency_ms,
+        success=False,
+        error=str(last_error),
+    )
     raise last_error  # type: ignore[misc]
 
 
@@ -125,7 +154,6 @@ async def knowledge_graph_query_node(
 
     try:
         blast_radius = await kg_store.get_blast_radius(service_id)
-        # Ensure alerting service is part of blast radius
         if service_id not in blast_radius:
             blast_radius = [service_id] + blast_radius
 
@@ -135,7 +163,6 @@ async def knowledge_graph_query_node(
 
     except Exception as e:
         logger.error(f"Error querying knowledge graph: {e}")
-        # Fallback values
         blast_radius = [service_id]
         dependencies = []
         owner_team = {"id": "unknown", "oncall_slack": "#oncall-fallback"}
@@ -160,15 +187,15 @@ async def knowledge_graph_query_node(
     }
 
 
-async def log_investigation_node(
+async def observability_investigation_node(
     state: InvestigationState, config: RunnableConfig
 ) -> dict[str, Any]:
-    """Node: Collect recent logs, errors, and traces in parallel."""
-    logger.info("Log Investigation Node started")
+    """Node: Collect logs, errors, traces, metrics, and anomalies in parallel via observability MCP server."""
+    logger.info("Observability Investigation Node started")
     await notify_progress(
         config,
-        event_type="logs_started",
-        message="Collecting logs and traces for services in blast radius...",
+        event_type="observability_started",
+        message="Collecting logs, errors, traces, metrics, and anomalies across blast radius...",
         details={"blast_radius": state.blast_radius},
     )
 
@@ -176,72 +203,230 @@ async def log_investigation_node(
     await mcp_client.initialize()
 
     log_evidence: dict[str, Any] = {}
+    metrics_evidence: dict[str, Any] = {}
+    semaphore = asyncio.Semaphore(5)
 
-    # Query logs/errors/traces for all services in blast radius
-    for service in state.blast_radius:
-        log_evidence[service] = {}
+    async def _investigate_service(svc: str) -> None:
+        async with semaphore:
+            log_evidence[svc] = {}
+            metrics_evidence[svc] = {}
 
-        # 1. Fetch errors
+            # Parallel calls per service
+            async def _fetch_errors() -> None:
+                try:
+                    res = await _call_mcp_tool(
+                        client=mcp_client,
+                        server="observability",
+                        tool_name="get_errors",
+                        arguments={"service": svc, "limit": 10},
+                        incident_id=state.incident_id,
+                        agent_name="observability",
+                        max_retries=agent_settings.TOOL_MAX_RETRIES,
+                    )
+                    log_evidence[svc]["errors"] = res
+                except Exception as e:
+                    logger.error(f"Failed to fetch errors for {svc}: {e}")
+                    log_evidence[svc]["errors"] = "unavailable"
+
+            async def _fetch_traces() -> None:
+                try:
+                    res = await _call_mcp_tool(
+                        client=mcp_client,
+                        server="observability",
+                        tool_name="get_traces",
+                        arguments={"service": svc},
+                        incident_id=state.incident_id,
+                        agent_name="observability",
+                        max_retries=agent_settings.TOOL_MAX_RETRIES,
+                    )
+                    log_evidence[svc]["traces"] = res
+                except Exception as e:
+                    logger.error(f"Failed to fetch traces for {svc}: {e}")
+                    log_evidence[svc]["traces"] = "unavailable"
+
+            async def _fetch_metrics() -> None:
+                try:
+                    res = await _call_mcp_tool(
+                        client=mcp_client,
+                        server="observability",
+                        tool_name="get_metrics",
+                        arguments={"service": svc, "minutes": 60},
+                        incident_id=state.incident_id,
+                        agent_name="observability",
+                        max_retries=agent_settings.TOOL_MAX_RETRIES,
+                    )
+                    metrics_evidence[svc]["metrics"] = res
+                except Exception as e:
+                    logger.error(f"Failed to fetch metrics for {svc}: {e}")
+                    metrics_evidence[svc]["metrics"] = "unavailable"
+
+            async def _fetch_anomalies() -> None:
+                try:
+                    res = await _call_mcp_tool(
+                        client=mcp_client,
+                        server="observability",
+                        tool_name="get_anomalies",
+                        arguments={"service": svc, "minutes": 60},
+                        incident_id=state.incident_id,
+                        agent_name="observability",
+                        max_retries=agent_settings.TOOL_MAX_RETRIES,
+                    )
+                    metrics_evidence[svc]["anomalies"] = res
+                except Exception as e:
+                    logger.error(f"Failed to fetch anomalies for {svc}: {e}")
+                    metrics_evidence[svc]["anomalies"] = "unavailable"
+
+            await asyncio.gather(
+                _fetch_errors(), _fetch_traces(), _fetch_metrics(), _fetch_anomalies()
+            )
+
+    await asyncio.gather(*[_investigate_service(s) for s in state.blast_radius])
+    await mcp_client.shutdown()
+
+    await notify_progress(
+        config,
+        event_type="observability_completed",
+        message="Observability logs and metrics collection complete.",
+        details={"services_investigated": list(log_evidence.keys())},
+    )
+
+    return {"log_evidence": log_evidence, "metrics_evidence": metrics_evidence}
+
+
+async def deploy_investigation_node(
+    state: InvestigationState, config: RunnableConfig
+) -> dict[str, Any]:
+    """Node: Collect recent deployments via deploy MCP server."""
+    logger.info("Deploy Investigation Node started")
+    await notify_progress(
+        config,
+        event_type="deploy_started",
+        message="Checking recent deployment history for alerting service and dependencies...",
+    )
+
+    mcp_client = create_mcp_client(agent_settings)
+    await mcp_client.initialize()
+
+    deploy_evidence: dict[str, Any] = {}
+
+    for service in [state.service_id] + state.dependencies:
         try:
-            errors = await _call_tool_with_retry(
+            res = await _call_mcp_tool(
                 client=mcp_client,
-                server="logs",
-                tool_name="get_errors",
-                arguments={"service": service, "limit": 10},
+                server="deploy",
+                tool_name="get_recent_deploys",
+                arguments={"service": service, "limit": 5},
+                incident_id=state.incident_id,
+                agent_name="deploy",
                 max_retries=agent_settings.TOOL_MAX_RETRIES,
             )
-            log_evidence[service]["errors"] = errors
+            deploy_evidence[service] = res
         except Exception as e:
-            logger.error(f"Failed to fetch errors for {service}: {e}")
-            log_evidence[service]["errors"] = "unavailable"
-
-        # 2. Fetch traces
-        try:
-            traces = await _call_tool_with_retry(
-                client=mcp_client,
-                server="logs",
-                tool_name="get_traces",
-                arguments={"service": service},
-                max_retries=agent_settings.TOOL_MAX_RETRIES,
-            )
-            log_evidence[service]["traces"] = traces
-        except Exception as e:
-            logger.error(f"Failed to fetch traces for {service}: {e}")
-            log_evidence[service]["traces"] = "unavailable"
+            logger.error(f"Failed to fetch deployments for {service}: {e}")
+            deploy_evidence[service] = "unavailable"
 
     await mcp_client.shutdown()
 
     await notify_progress(
         config,
-        event_type="logs_completed",
-        message="Log and trace evidence collection complete.",
-        details={"services_investigated": list(log_evidence.keys())},
+        event_type="deploy_completed",
+        message="Deployment history check completed.",
+        details={"deployments_found": list(deploy_evidence.keys())},
     )
 
-    return {"log_evidence": log_evidence}
+    return {"deploy_evidence": deploy_evidence}
 
 
-async def github_investigation_node(
+async def incident_knowledge_code_diff_node(
     state: InvestigationState, config: RunnableConfig
 ) -> dict[str, Any]:
-    """Node: Placeholder for code change investigation (Step 9 implementation)."""
-    logger.info("GitHub Investigation Node started (stub)")
+    """Node: Search playbooks/runbooks, resolutions, and recent code commit diffs."""
+    logger.info("Incident Knowledge & Code Diff Node started")
     await notify_progress(
         config,
-        event_type="github_started",
-        message="Searching recently deployed commits and pull requests (Placeholder)...",
+        event_type="knowledge_diff_started",
+        message="Searching incident knowledge base and code commit diffs...",
     )
 
-    # Empty placeholder for now
+    mcp_client = create_mcp_client(agent_settings)
+    await mcp_client.initialize()
+
+    incident_knowledge_evidence: dict[str, Any] = {}
     code_evidence: dict[str, Any] = {}
 
+    # 1. Search incident knowledge base (runbooks, playbooks, resolutions)
+    try:
+        kb_res = await _call_mcp_tool(
+            client=mcp_client,
+            server="incident_knowledge",
+            tool_name="search_incident_knowledge",
+            arguments={"service": state.service_id, "query": state.alert_message, "limit": 5},
+            incident_id=state.incident_id,
+            agent_name="incident_knowledge",
+            max_retries=agent_settings.TOOL_MAX_RETRIES,
+        )
+        incident_knowledge_evidence["matching_runbooks"] = kb_res
+    except Exception as e:
+        logger.error(f"Failed to search incident knowledge: {e}")
+        incident_knowledge_evidence["matching_runbooks"] = []
+
+    try:
+        res_res = await _call_mcp_tool(
+            client=mcp_client,
+            server="incident_knowledge",
+            tool_name="get_past_resolutions",
+            arguments={"service": state.service_id, "limit": 5},
+            incident_id=state.incident_id,
+            agent_name="incident_knowledge",
+            max_retries=agent_settings.TOOL_MAX_RETRIES,
+        )
+        incident_knowledge_evidence["past_resolutions"] = res_res
+    except Exception as e:
+        logger.error(f"Failed to fetch past resolutions: {e}")
+        incident_knowledge_evidence["past_resolutions"] = []
+
+    # 2. Fetch code commit diffs for alerting service
+    try:
+        commits = await _call_mcp_tool(
+            client=mcp_client,
+            server="code_diff",
+            tool_name="get_recent_commits",
+            arguments={"service": state.service_id, "limit": 5},
+            incident_id=state.incident_id,
+            agent_name="code_diff",
+            max_retries=agent_settings.TOOL_MAX_RETRIES,
+        )
+        code_evidence[state.service_id] = {"recent_commits": commits}
+
+        if isinstance(commits, list) and len(commits) > 0:
+            latest_sha = commits[0].get("commit_sha") or commits[0].get("sha")
+            if latest_sha:
+                diff = await _call_mcp_tool(
+                    client=mcp_client,
+                    server="code_diff",
+                    tool_name="get_commit_diff",
+                    arguments={"service": state.service_id, "commit_sha": latest_sha},
+                    incident_id=state.incident_id,
+                    agent_name="code_diff",
+                    max_retries=agent_settings.TOOL_MAX_RETRIES,
+                )
+                code_evidence[state.service_id]["latest_commit_diff"] = diff
+    except Exception as e:
+        logger.error(f"Failed to fetch code diffs for {state.service_id}: {e}")
+        code_evidence[state.service_id] = "unavailable"
+
+    await mcp_client.shutdown()
+
     await notify_progress(
         config,
-        event_type="github_completed",
-        message="Code deployment history search complete (Placeholder).",
+        event_type="knowledge_diff_completed",
+        message="Incident knowledge and code diff search complete.",
     )
 
-    return {"code_evidence": code_evidence}
+    return {
+        "incident_knowledge_evidence": incident_knowledge_evidence,
+        "code_evidence": code_evidence,
+    }
 
 
 async def synthesize_node(
@@ -257,7 +442,6 @@ async def synthesize_node(
 
     llm = create_llm_adapter(agent_settings)
 
-    # Build prompt content
     user_content = SYNTHESIZER_USER_TEMPLATE.format(
         incident_id=state.incident_id,
         service_id=state.service_id,
@@ -267,6 +451,9 @@ async def synthesize_node(
         owner_team=state.owner_team,
         historical_incidents=state.historical_incidents,
         log_evidence=json.dumps(state.log_evidence, indent=2),
+        metrics_evidence=json.dumps(state.metrics_evidence, indent=2),
+        deploy_evidence=json.dumps(state.deploy_evidence, indent=2),
+        incident_knowledge_evidence=json.dumps(state.incident_knowledge_evidence, indent=2),
         code_evidence=json.dumps(state.code_evidence, indent=2),
     )
 
@@ -281,7 +468,6 @@ async def synthesize_node(
         content = response.content or ""
         logger.debug(f"Raw LLM synthesis response: {content}")
 
-        # Clean JSON markdown markup if LLM outputs it
         if "```" in content:
             match = re.search(r"```json\s*(.*?)\s*```", content, re.DOTALL)
             if match:
@@ -292,17 +478,19 @@ async def synthesize_node(
                     content = match.group(1)
 
         report_dict = json.loads(content.strip())
+        report_dict["model_used"] = agent_settings.LLM_MODEL
         report = RootCauseReport.model_validate(report_dict)
 
     except Exception as e:
         logger.error(f"Error parsing LLM response or validating report: {e}. Raw response: {content}")
-        # Build a safe fallback report
         report = RootCauseReport(
             root_cause=f"AI synthesis failed to produce structured JSON report. Exception: {str(e)}",
-            evidence_summary="No structured log evidence could be parsed from synthesizer.",
+            evidence_summary="No structured evidence could be parsed from synthesizer.",
             affected_services=[state.service_id],
-            remediation_steps=["Check the system logs for LLM parser errors."],
+            remediation_steps=["Check system logs for LLM parser errors."],
             confidence_score=0.1,
+            uncertainty=f"Failed LLM synthesis: {str(e)}",
+            model_used=agent_settings.LLM_MODEL,
         )
 
     await notify_progress(
@@ -318,7 +506,7 @@ async def synthesize_node(
 async def confidence_gate_node(
     state: InvestigationState, config: RunnableConfig
 ) -> dict[str, Any]:
-    """Node: Validates report confidence score against the threshold."""
+    """Node: Validates report confidence score against threshold."""
     logger.info("Confidence Gate Node started")
     await notify_progress(
         config,
@@ -358,8 +546,9 @@ def _build_workflow() -> StateGraph:
     # Register nodes
     workflow.add_node("intake", intake_node)
     workflow.add_node("knowledge_graph_query", knowledge_graph_query_node)
-    workflow.add_node("log_investigation", log_investigation_node)
-    workflow.add_node("github_investigation", github_investigation_node)
+    workflow.add_node("observability_investigation", observability_investigation_node)
+    workflow.add_node("deploy_investigation", deploy_investigation_node)
+    workflow.add_node("incident_knowledge_code_diff", incident_knowledge_code_diff_node)
     workflow.add_node("synthesize", synthesize_node)
     workflow.add_node("confidence_gate", confidence_gate_node)
 
@@ -367,13 +556,15 @@ def _build_workflow() -> StateGraph:
     workflow.set_entry_point("intake")
     workflow.add_edge("intake", "knowledge_graph_query")
 
-    # Parallel fan-out
-    workflow.add_edge("knowledge_graph_query", "log_investigation")
-    workflow.add_edge("knowledge_graph_query", "github_investigation")
+    # Parallel fan-out after knowledge graph query
+    workflow.add_edge("knowledge_graph_query", "observability_investigation")
+    workflow.add_edge("knowledge_graph_query", "deploy_investigation")
+    workflow.add_edge("knowledge_graph_query", "incident_knowledge_code_diff")
 
-    # Parallel fan-in / merge
-    workflow.add_edge("log_investigation", "synthesize")
-    workflow.add_edge("github_investigation", "synthesize")
+    # Fan-in to synthesis
+    workflow.add_edge("observability_investigation", "synthesize")
+    workflow.add_edge("deploy_investigation", "synthesize")
+    workflow.add_edge("incident_knowledge_code_diff", "synthesize")
 
     # Gate verification
     workflow.add_edge("synthesize", "confidence_gate")
@@ -419,7 +610,6 @@ async def run_investigation(
         }
     }
 
-    # Run LangGraph Graph
     final_state_dict = await _graph.ainvoke(
         initial_state.model_dump(), config=config
     )
