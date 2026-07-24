@@ -16,7 +16,7 @@ class RootCauseReport(BaseModel):
         description="Detailed description of the identified root cause of the incident."
     )
     evidence_summary: str = Field(
-        description="Summary of log and trace evidence supporting this finding."
+        description="Summary of log, trace, metric, deployment, and runbook evidence supporting this finding."
     )
     affected_services: list[str] = Field(
         default_factory=list,
@@ -28,6 +28,14 @@ class RootCauseReport(BaseModel):
     )
     confidence_score: float = Field(
         description="Confidence score for the diagnosis, between 0.0 and 1.0."
+    )
+    uncertainty: str = Field(
+        default="",
+        description="Known evidence gaps or low-confidence aspects of the investigation.",
+    )
+    model_used: str = Field(
+        default="",
+        description="LLM provider/model that produced this synthesis report.",
     )
 
 
@@ -62,9 +70,21 @@ class InvestigationState(BaseModel):
         default_factory=dict,
         description="Collected logs, traces, and error patterns indexed by service.",
     )
+    metrics_evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Collected metric series and anomaly detectors indexed by service.",
+    )
+    deploy_evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Collected recent deployment details indexed by service.",
+    )
+    incident_knowledge_evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Matching playbooks, runbooks, and past resolutions.",
+    )
     code_evidence: dict[str, Any] = Field(
         default_factory=dict,
-        description="Collected git commits and pull request diffs indexed by service/repo.",
+        description="Collected git commits and pull request diffs indexed by service.",
     )
 
     # Synthesis result (populated in Step 3)

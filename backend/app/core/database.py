@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from .config import settings
 
@@ -45,7 +45,9 @@ sqlite_engine = create_async_engine(sqlite_url, echo=False)
 use_sqlite_fallback = is_testing or pg_engine is None
 engine = sqlite_engine if use_sqlite_fallback else pg_engine
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
+
 
 # Default session factory (imported by routers/tests)
 AsyncSessionLocal = async_sessionmaker(

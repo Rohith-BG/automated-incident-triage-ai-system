@@ -11,17 +11,12 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class KnowledgeGraphStore(Protocol):
-    """Read-only knowledge graph used by the orchestrator."""
+    """Knowledge graph store supporting both read queries and mutation updates."""
 
     async def get_service_info(
         self, service_id: str
     ) -> dict[str, Any]:
-        """Return full metadata for a single service.
-
-        Keys: id, owner_team, dependencies, repo, language,
-              alert_threshold.
-        Raises KeyError if service not found.
-        """
+        """Return full metadata for a single service."""
         ...
 
     async def get_dependencies(
@@ -39,31 +34,19 @@ class KnowledgeGraphStore(Protocol):
     async def get_blast_radius(
         self, service_id: str
     ) -> list[str]:
-        """Return full blast radius: the service itself +
-        all transitive upstream dependents.
-
-        Used to scope log/metrics collection before
-        parallel investigation.
-        """
+        """Return full blast radius: the service itself + all transitive upstream dependents."""
         ...
 
     async def get_owner_team(
         self, service_id: str
     ) -> dict[str, str]:
-        """Return owner team info including oncall_slack channel.
-
-        Returns: {"id": "...", "oncall_slack": "#..."}
-        """
+        """Return owner team info including oncall_slack channel."""
         ...
 
     async def get_historical_incidents(
         self, service_id: str
     ) -> list[dict[str, Any]]:
-        """Return past incidents for this service.
-
-        MVP: returns empty list (no history stored yet).
-        Prod: queries incident DB or Neo4j relationships.
-        """
+        """Return past incidents for this service."""
         ...
 
     async def get_all_services(self) -> list[str]:
@@ -74,4 +57,36 @@ class KnowledgeGraphStore(Protocol):
         self, service_id: str
     ) -> str:
         """Return the GitHub repo slug (org/repo) for a service."""
+        ...
+
+    # ── Write Mutation Methods ─────────────────────────────
+
+    async def apply_mutations(
+        self, mutations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply a batch of graph mutations atomically."""
+        ...
+
+    async def add_dependency(
+        self, from_id: str, to_id: str
+    ) -> None:
+        """Add a dependency edge from_id -> to_id."""
+        ...
+
+    async def remove_dependency(
+        self, from_id: str, to_id: str
+    ) -> None:
+        """Remove a dependency edge from_id -> to_id."""
+        ...
+
+    async def add_node(
+        self, node_id: str, metadata: dict[str, Any]
+    ) -> None:
+        """Add or update a service/module node."""
+        ...
+
+    async def update_metadata(
+        self, node_id: str, field: str, value: Any
+    ) -> None:
+        """Update a metadata property on an existing node."""
         ...
