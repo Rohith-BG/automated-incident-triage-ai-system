@@ -145,6 +145,8 @@ async def test_complete_investigation(
     report.affected_services = ["cart-service"]
     report.remediation_steps = ["Restart Redis"]
     report.confidence_score = 0.92
+    report.uncertainty = "None identified"
+    report.model_used = "gemini-2.5-flash"
 
     await service.complete_investigation("inc-1", report)
 
@@ -155,6 +157,8 @@ async def test_complete_investigation(
         affected_services=["cart-service"],
         remediation_steps=["Restart Redis"],
         confidence_score=0.92,
+        uncertainty="None identified",
+        model_used="gemini-2.5-flash",
     )
     mock_repo.update_status.assert_called_once_with(
         "inc-1", IncidentStatus.COMPLETED

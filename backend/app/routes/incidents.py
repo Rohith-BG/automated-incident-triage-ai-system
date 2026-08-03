@@ -54,13 +54,16 @@ async def _run_orchestrator_task(
         incident_id,
     )
 
-    async def _log_progress(event: dict[str, Any]) -> None:
+    from ..websocket import global_ws_manager
+
+    async def _broadcast_progress(event: dict[str, Any]) -> None:
         logger.info(
             "Progress [%s]: %s - %s",
             incident_id,
             event.get("event_type"),
             event.get("message"),
         )
+        await global_ws_manager.broadcast_event(incident_id, event)
 
     # 1. Run the agent pipeline
     report = None
@@ -71,7 +74,7 @@ async def _run_orchestrator_task(
             incident_id=incident_id,
             service_id=service_id,
             alert_message=alert_message,
-            progress_callback=_log_progress,
+            progress_callback=_broadcast_progress,
         )
         report = state.report
     except Exception as exc:

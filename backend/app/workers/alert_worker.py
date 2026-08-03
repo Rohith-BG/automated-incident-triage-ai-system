@@ -4,6 +4,9 @@ AlertWorker background SQS consumer.
 Consumes AlertQueueMessage items from SQS (or in-memory mock queue in dev),
 applies status-driven deduplication (Rule 13), executes the LangGraph orchestrator,
 persists the report, and updates incident status.
+
+WebSocket broadcasting: investigation progress events are pushed to
+connected dashboard clients via global_ws_manager.
 """
 
 import asyncio
@@ -16,8 +19,15 @@ from agents.orchestrator.graph import run_investigation
 from backend.app.enums import IncidentStatus
 from backend.app.repositories.incident import IncidentRepository
 from backend.app.schemas.queue_messages import AlertQueueMessage
+from backend.app.websocket import global_ws_manager
 
 logger = logging.getLogger(__name__)
+
+
+async def _ws_progress_callback(event: dict[str, Any]) -> None:
+    """Default progress callback broadcasting to WebSocket clients."""
+    incident_id = event.get("incident_id", "unknown")
+    await global_ws_manager.broadcast_event(incident_id, event)
 
 
 class AlertWorker:
@@ -30,7 +40,7 @@ class AlertWorker:
     ) -> None:
         """Initialise with async DB session factory and optional progress streaming callback."""
         self._session_factory = session_factory
-        self._progress_callback = progress_callback
+        self._progress_callback = progress_callback or _ws_progress_callback
 
     async def process_alert(self, message: AlertQueueMessage) -> dict[str, Any]:
         """Process a single AlertQueueMessage.
@@ -122,9 +132,9 @@ class AlertWorker:
                 "incident_id": incident_id,
                 "service_id": message.service_id,
                 "is_duplicate": False,
-                "status": "root_cause_identified"
+                "status": IncidentStatus.ROOT_CAUSE_IDENTIFIED.value
                 if investigation_state.confidence_gate_passed
-                else "failed",
+                else IncidentStatus.INVESTIGATING.value,
             }
 
         except Exception as e:
