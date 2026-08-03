@@ -150,6 +150,8 @@ class IncidentService:
             affected_services=report.affected_services,
             remediation_steps=report.remediation_steps,
             confidence_score=report.confidence_score,
+            uncertainty=getattr(report, "uncertainty", ""),
+            model_used=getattr(report, "model_used", ""),
         )
         await self._repo.update_status(
             incident_id, IncidentStatus.COMPLETED

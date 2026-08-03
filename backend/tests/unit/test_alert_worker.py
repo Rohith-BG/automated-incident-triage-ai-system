@@ -3,6 +3,7 @@
 import pytest
 import pytest_asyncio
 from backend.app.core.database import AsyncSessionLocal, Base, engine
+from backend.app.enums import IncidentStatus
 from backend.app.schemas.queue_messages import AlertQueueMessage
 from backend.app.workers.alert_worker import AlertWorker
 
@@ -30,7 +31,10 @@ async def test_alert_worker_process_new_alert() -> None:
     res = await worker.process_alert(msg)
     assert res["is_duplicate"] is False
     assert res["incident_id"] is not None
-    assert res["status"] in ("root_cause_identified", "investigating")
+    assert res["status"] in (
+        IncidentStatus.ROOT_CAUSE_IDENTIFIED.value,
+        IncidentStatus.INVESTIGATING.value,
+    )
 
 
 @pytest.mark.asyncio

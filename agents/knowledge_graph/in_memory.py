@@ -156,6 +156,7 @@ class InMemoryGraphStore:
                     "repo": metadata.get("repo", ""),
                     "language": metadata.get("language", "Python"),
                     "alert_threshold": metadata.get("alert_threshold", "medium"),
+                    "architecture_type": metadata.get("architecture_type", "microservice"),
                 }
             else:
                 self._services[node_id].update(metadata)

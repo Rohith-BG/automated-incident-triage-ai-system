@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.kg_change_proposal import KGChangeProposal
+from ..enums import ProposalStatus
 
 
 class KGChangeProposalRepository:
@@ -38,7 +39,7 @@ class KGChangeProposalRepository:
             component_id=component_id or service_id,
             proposed_changes=proposed_changes,
             diff_summary=diff_summary,
-            status="pending",
+            status=ProposalStatus.PENDING,
             parent_proposal_id=parent_proposal_id,
         )
         self._session.add(proposal)
@@ -59,7 +60,7 @@ class KGChangeProposalRepository:
             select(KGChangeProposal)
             .where(KGChangeProposal.service_id == service_id)
             .where(KGChangeProposal.commit_sha == commit_sha)
-            .where(KGChangeProposal.status == "pending")
+            .where(KGChangeProposal.status == ProposalStatus.PENDING)
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()

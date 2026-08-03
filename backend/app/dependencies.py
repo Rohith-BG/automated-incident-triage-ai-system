@@ -140,6 +140,47 @@ def get_kg_proposal_service(
     return KGProposalService(proposal_repo=repo)
 
 
+# ── Onboarding domain ───────────────────────────────────
+
+
+def get_onboarding_service(
+    registry_repo: ServiceRegistryRepository = Depends(get_service_registry_repository),
+    proposal_repo: KGChangeProposalRepository = Depends(get_kg_proposal_repository),
+):
+    """Provide an OnboardingService with injected repositories."""
+    from backend.app.services.onboarding import OnboardingService
+
+    return OnboardingService(
+        service_registry_repo=registry_repo,
+        kg_proposal_repo=proposal_repo,
+    )
+
+
+def get_onboarding_controller(
+    service=Depends(get_onboarding_service),
+):
+    """Provide an OnboardingController with injected service."""
+    from backend.app.controllers.onboarding import OnboardingController
+
+    return OnboardingController(service=service)
+
+
+# ── Trace domain ────────────────────────────────────────
+
+
+def get_trace_service():
+    """Provide a TraceService backed by the agent TraceRecorder.
+
+    This is the single boundary crossing point (DIP):
+    dependencies.py imports the agent singleton and injects it
+    into a backend service, so routes never import agents/ directly.
+    """
+    from agents.tracing import global_trace_recorder
+    from backend.app.services.trace import TraceService
+
+    return TraceService(provider=global_trace_recorder)
+
+
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/auth/login",
     auto_error=False,
@@ -215,8 +256,5 @@ def require_role(*roles: UserRole | str):
                 "Insufficient permissions for this action."
             )
         return current_user
-
-    return _check_role
-
 
     return _check_role

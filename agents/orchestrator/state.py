@@ -47,6 +47,17 @@ class InvestigationState(BaseModel):
     service_id: str = Field(description="The source service ID that raised the alert.")
     alert_message: str = Field(description="The alert payload or error message description.")
 
+    # Architecture dispatch (Rule 25)
+    architecture_type: str = Field(
+        default="microservice",
+        description="Architecture classification: 'microservice' or 'monolith'.",
+    )
+    entry_point: str = Field(
+        default="",
+        description="Graph entry node for KG queries. "
+        "service_id for microservices, module path for monoliths.",
+    )
+
     # Knowledge Graph context (populated in Step 1)
     blast_radius: list[str] = Field(
         default_factory=list,

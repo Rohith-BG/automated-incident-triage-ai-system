@@ -8,6 +8,7 @@ from typing import Any, Optional
 from ..exceptions import NotFoundException
 from ..models.kg_change_proposal import KGChangeProposal
 from ..models.service_registry import ServiceRegistry
+from ..enums import ProposalStatus
 from ..repositories.kg_change_proposal import KGChangeProposalRepository
 from ..repositories.service_registry import ServiceRegistryRepository
 
@@ -33,7 +34,7 @@ class ServiceRegistryService:
         """Register a new service."""
         existing = await self._repo.get_by_service_id(service_id)
         if existing:
-            return await self._repo.update(
+            updated = await self._repo.update(
                 service_id,
                 repo=repo,
                 owner_team=owner_team,
@@ -41,7 +42,9 @@ class ServiceRegistryService:
                 language=language,
                 alert_threshold=alert_threshold,
                 is_active=True,
-            )  # type: ignore[return-value]
+            )
+            assert updated is not None  # guaranteed: checked above
+            return updated
         return await self._repo.create(
             service_id=service_id,
             repo=repo,
@@ -140,7 +143,7 @@ class KGProposalService:
     async def approve_proposal(self, proposal_id: str, reviewer: str) -> KGChangeProposal:
         """Approve proposal and apply mutations to the active Knowledge Graph store."""
         proposal = await self.get_proposal(proposal_id)
-        if proposal.status != "pending":
+        if proposal.status != ProposalStatus.PENDING:
             raise ValueError(f"Cannot approve proposal in state '{proposal.status}'")
 
         if self._kg_store:
@@ -149,7 +152,7 @@ class KGProposalService:
 
         updated = await self._proposal_repo.update_status(
             proposal_id=proposal_id,
-            status="approved",
+            status=ProposalStatus.APPROVED,
             reviewed_by=reviewer,
         )
         return updated  # type: ignore[return-value]
@@ -159,12 +162,12 @@ class KGProposalService:
     ) -> KGChangeProposal:
         """Reject proposal."""
         proposal = await self.get_proposal(proposal_id)
-        if proposal.status != "pending":
+        if proposal.status != ProposalStatus.PENDING:
             raise ValueError(f"Cannot reject proposal in state '{proposal.status}'")
 
         updated = await self._proposal_repo.update_status(
             proposal_id=proposal_id,
-            status="rejected",
+            status=ProposalStatus.REJECTED,
             reviewed_by=reviewer,
             admin_feedback=reason,
         )
@@ -175,13 +178,13 @@ class KGProposalService:
     ) -> KGChangeProposal:
         """Submit feedback for a proposal, triggering agent re-analysis loop."""
         proposal = await self.get_proposal(proposal_id)
-        if proposal.status != "pending":
+        if proposal.status != ProposalStatus.PENDING:
             raise ValueError(f"Cannot add feedback to proposal in state '{proposal.status}'")
 
         # 1. Update status to feedback
         await self._proposal_repo.update_status(
             proposal_id=proposal_id,
-            status="feedback",
+            status=ProposalStatus.FEEDBACK,
             reviewed_by=reviewer,
             admin_feedback=feedback,
         )

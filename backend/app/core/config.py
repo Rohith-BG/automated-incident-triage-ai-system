@@ -62,12 +62,9 @@ class Settings(BaseSettings):
     # Prometheus (Production only)
     PROMETHEUS_URL: str = "http://prometheus:9090"
 
-    # MCP Server Ports
-    LOGS_AGENT_PORT: int = 8001
-    DEPLOY_AGENT_PORT: int = 8002
-    METRICS_AGENT_PORT: int = 8003
-    RUNBOOK_AGENT_PORT: int = 8004
-    CODE_DIFF_AGENT_PORT: int = 8005
+    # SQS Queues
+    ALERT_SQS_QUEUE_URL: Optional[str] = None
+    DEPLOY_SQS_QUEUE_URL: Optional[str] = None
 
     # Slack
     SLACK_WEBHOOK_URL: Optional[str] = None

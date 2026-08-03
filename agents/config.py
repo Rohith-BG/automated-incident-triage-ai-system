@@ -63,6 +63,8 @@ class AgentSettings(BaseSettings):
     # ── AWS & SQS ─────────────────────────────────────────
     AWS_REGION: str = "us-east-1"
     CLOUDWATCH_LOG_GROUP_PREFIX: str = "/ecs"
+    ALERT_SQS_QUEUE_URL: Optional[str] = None
+    ALERT_SQS_DLQ_URL: Optional[str] = None
     DEPLOY_SQS_QUEUE_URL: Optional[str] = None
     DEPLOY_SQS_DLQ_URL: Optional[str] = None
 
@@ -130,14 +132,9 @@ class AgentSettings(BaseSettings):
         return self.KG_BACKEND == "neo4j"
 
     @property
-    def uses_mock_logs(self) -> bool:
-        """True when log source is mock data."""
-        return self.LOG_BACKEND == "mock"
-
-    @property
-    def uses_mock_metrics(self) -> bool:
-        """True when metrics source is mock data."""
-        return self.METRICS_BACKEND == "mock"
+    def uses_mock_observability(self) -> bool:
+        """True when observability source is mock data."""
+        return self.OBSERVABILITY_BACKEND == "mock"
 
 
 # Singleton — import this everywhere in agents/

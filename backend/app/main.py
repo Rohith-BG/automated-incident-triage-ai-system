@@ -12,7 +12,9 @@ from .routes.incidents import router as incidents_router
 from .routes.services import router as services_router
 from .routes.incident_knowledge import router as incident_knowledge_router
 from .routes.kg_proposals import router as kg_proposals_router
+from .routes.onboarding import router as onboarding_router
 from .routes.service_registry import router as service_registry_router
+from .routes.traces import router as traces_router
 from .websocket import router as websocket_router
 
 configure_logging(settings)
@@ -44,8 +46,10 @@ ExceptionHandlerRegistry().register(app)
 
 app.include_router(services_router)
 app.include_router(incidents_router)
+app.include_router(traces_router)
 app.include_router(incident_knowledge_router)
 app.include_router(service_registry_router)
+app.include_router(onboarding_router)
 app.include_router(kg_proposals_router)
 app.include_router(alerts_router)
 app.include_router(auth_router)

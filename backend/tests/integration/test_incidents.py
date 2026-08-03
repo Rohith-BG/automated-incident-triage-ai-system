@@ -214,7 +214,7 @@ async def test_list_incidents_filter_by_status() -> None:
     resp = client.get("/incidents?status=completed")
     data = resp.json()
     assert len(data["items"]) == 1
-    assert data["items"][0]["status"] == "completed"
+    assert data["items"][0]["status"] == IncidentStatus.COMPLETED.value
 
 
 # ── GET /incidents/{id} ──────────────────────────────────

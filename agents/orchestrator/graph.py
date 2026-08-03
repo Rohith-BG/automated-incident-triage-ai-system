@@ -114,10 +114,31 @@ async def _call_mcp_tool(
 # ── LangGraph Nodes ───────────────────────────────────────────────────────
 
 
+def _extract_module_entry_point(
+    alert_message: str, fallback: str
+) -> str:
+    """Extract a dotted module path from an alert message.
+
+    Looks for patterns like 'module.submodule' in the alert text.
+    Falls back to the given fallback (service_id) if no module
+    path is found.
+    """
+    # Match dotted identifiers like "payments.stripe_client"
+    match = re.search(
+        r"\b([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)+)\b",
+        alert_message,
+    )
+    return match.group(1) if match else fallback
+
+
 async def intake_node(
     state: InvestigationState, config: RunnableConfig
 ) -> dict[str, Any]:
-    """Node: Initial alert intake and validation."""
+    """Node: Initial alert intake, architecture detection, and entry point resolution.
+
+    Resolves architecture_type from the KG service metadata and
+    derives the graph entry_point for downstream KG queries (Rule 25).
+    """
     logger.info(f"Intake Node started for incident {state.incident_id}")
     await notify_progress(
         config,
@@ -126,6 +147,36 @@ async def intake_node(
         details={"service_id": state.service_id},
     )
 
+    # Resolve architecture type from KG metadata
+    architecture_type = "microservice"
+    entry_point = state.service_id
+    try:
+        kg_store = create_kg_store(agent_settings)
+        svc_info = await kg_store.get_service_info(state.service_id)
+        architecture_type = svc_info.get(
+            "architecture_type", "microservice"
+        )
+
+        if architecture_type == "monolith":
+            # For monoliths, extract module path from alert message
+            # e.g. "Error in payments.stripe_client: timeout"
+            # → entry_point = "payments.stripe_client"
+            entry_point = _extract_module_entry_point(
+                state.alert_message, state.service_id
+            )
+        # microservice: entry_point stays as service_id
+    except KeyError:
+        logger.warning(
+            "Service %s not in KG, defaulting to microservice",
+            state.service_id,
+        )
+    except Exception as e:
+        logger.error(
+            "Error resolving architecture for %s: %s",
+            state.service_id,
+            e,
+        )
+
     await notify_progress(
         config,
         event_type="intake_completed",
@@ -133,15 +184,26 @@ async def intake_node(
         details={
             "incident_id": state.incident_id,
             "service_id": state.service_id,
+            "architecture_type": architecture_type,
+            "entry_point": entry_point,
         },
     )
-    return {}
+    return {
+        "architecture_type": architecture_type,
+        "entry_point": entry_point,
+    }
 
 
 async def knowledge_graph_query_node(
     state: InvestigationState, config: RunnableConfig
 ) -> dict[str, Any]:
-    """Node: Scope blast radius and dependencies via Knowledge Graph."""
+    """Node: Scope blast radius and dependencies via Knowledge Graph.
+
+    Uses state.entry_point (set by intake_node) as the graph
+    lookup key. For microservices this equals service_id; for
+    monoliths it is the module path. Graph queries remain
+    type-agnostic (Rule 25).
+    """
     logger.info("Knowledge Graph Query Node started")
     await notify_progress(
         config,
@@ -150,20 +212,25 @@ async def knowledge_graph_query_node(
     )
 
     kg_store = create_kg_store(agent_settings)
-    service_id = state.service_id
+    # Use entry_point for graph queries; fall back to service_id
+    lookup_id = state.entry_point or state.service_id
 
     try:
-        blast_radius = await kg_store.get_blast_radius(service_id)
-        if service_id not in blast_radius:
-            blast_radius = [service_id] + blast_radius
+        blast_radius = await kg_store.get_blast_radius(lookup_id)
+        if lookup_id not in blast_radius:
+            blast_radius = [lookup_id] + blast_radius
 
-        dependencies = await kg_store.get_dependencies(service_id)
-        owner_team = await kg_store.get_owner_team(service_id)
-        historical_incidents = await kg_store.get_historical_incidents(service_id)
+        dependencies = await kg_store.get_dependencies(lookup_id)
+
+        # Owner team is always resolved at service level
+        owner_team = await kg_store.get_owner_team(state.service_id)
+        historical_incidents = await kg_store.get_historical_incidents(
+            state.service_id
+        )
 
     except Exception as e:
         logger.error(f"Error querying knowledge graph: {e}")
-        blast_radius = [service_id]
+        blast_radius = [lookup_id]
         dependencies = []
         owner_team = {"id": "unknown", "oncall_slack": "#oncall-fallback"}
         historical_incidents = []
@@ -176,6 +243,7 @@ async def knowledge_graph_query_node(
             "blast_radius": blast_radius,
             "dependencies": dependencies,
             "owner_team": owner_team,
+            "architecture_type": state.architecture_type,
         },
     )
 
