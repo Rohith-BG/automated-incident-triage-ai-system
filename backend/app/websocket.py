@@ -88,3 +88,32 @@ async def websocket_incident_stream(
                 await websocket.send_text(json.dumps({"type": "pong"}))
     except WebSocketDisconnect:
         global_ws_manager.disconnect(incident_id, websocket)
+
+
+@router.websocket("/ws/notifications")
+async def websocket_notifications_stream(
+    websocket: WebSocket,
+    token: str = Query(..., description="JWT access token"),
+) -> None:
+    """WebSocket endpoint streaming in-app notifications.
+
+    Clients subscribe to the shared 'notifications' channel; events
+    carry a ``notification`` payload for the signed-in user.
+    """
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await global_ws_manager.connect("notifications", websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+    except WebSocketDisconnect:
+        global_ws_manager.disconnect("notifications", websocket)

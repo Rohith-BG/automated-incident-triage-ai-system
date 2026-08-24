@@ -90,6 +90,19 @@ _OBSERVABILITY_TOOLS: list[ToolDef] = [
 _DEPLOY_TOOLS: list[ToolDef] = [
     ToolDef(
         server="deploy",
+        name="get_recent_deploys",
+        description="Return recent deployments for a service (evidence for the deploy investigation node).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "description": "Service ID."},
+                "limit": {"type": "integer", "description": "Max results (default 5).", "default": 5},
+            },
+            "required": ["service"],
+        },
+    ),
+    ToolDef(
+        server="deploy",
         name="analyze_deployment",
         description="Analyze code changes in a deployment and generate a structured KG change proposal.",
         parameters={
@@ -221,6 +234,100 @@ _CODE_DIFF_TOOLS: list[ToolDef] = [
 ]
 
 
+_REPO_INTELLIGENCE_TOOLS: list[ToolDef] = [
+    ToolDef(
+        server="repo_intelligence",
+        name="list_repositories",
+        description="List repositories in a GitHub organization.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "org": {"type": "string", "description": "GitHub organization name."},
+            },
+            "required": ["org"],
+        },
+    ),
+    ToolDef(
+        server="repo_intelligence",
+        name="get_repo_tree",
+        description="Return the file tree of a repository.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "GitHub repo slug (owner/repo)."},
+            },
+            "required": ["repo"],
+        },
+    ),
+    ToolDef(
+        server="repo_intelligence",
+        name="read_file",
+        description="Read the decoded content of a file in a repository.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "GitHub repo slug (owner/repo)."},
+                "path": {"type": "string", "description": "File path in the repo."},
+            },
+            "required": ["repo", "path"],
+        },
+    ),
+    ToolDef(
+        server="repo_intelligence",
+        name="extract_manifests",
+        description="Parse manifest/config files into structured dependency records.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "GitHub repo slug (owner/repo)."},
+                "service_id": {"type": "string", "description": "Optional service ID hint."},
+            },
+            "required": ["repo"],
+        },
+    ),
+    ToolDef(
+        server="repo_intelligence",
+        name="infer_dependencies",
+        description="Derive service-level dependency edges from manifests and imports.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "GitHub repo slug (owner/repo)."},
+                "service_id": {"type": "string", "description": "Service ID."},
+                "architecture_type": {"type": "string", "description": "microservice or monolith."},
+            },
+            "required": ["repo", "service_id"],
+        },
+    ),
+    ToolDef(
+        server="repo_intelligence",
+        name="inspect_architecture",
+        description="Describe how a repository maps to the graph (service or modules).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "GitHub repo slug (owner/repo)."},
+                "architecture_type": {"type": "string", "description": "microservice or monolith."},
+            },
+            "required": ["repo", "architecture_type"],
+        },
+    ),
+    ToolDef(
+        server="repo_intelligence",
+        name="inspect_deep_structure",
+        description="Discover packages and functions for hierarchical KG building.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "repo": {"type": "string", "description": "GitHub repo slug (owner/repo)."},
+                "architecture_type": {"type": "string", "description": "microservice or monolith."},
+            },
+            "required": ["repo", "architecture_type"],
+        },
+    ),
+]
+
+
 class InProcessMCPClient:
     """In-process MCP Client routing tool calls directly to providers."""
 
@@ -231,6 +338,7 @@ class InProcessMCPClient:
         self._deploy_provider: Any = None
         self._incident_knowledge_provider: Any = None
         self._code_diff_provider: Any = None
+        self._repo_intelligence_provider: Any = None
         self._tools: dict[str, dict[str, ToolDef]] = {}
         self._initialized = False
 
@@ -239,7 +347,7 @@ class InProcessMCPClient:
         if self._initialized:
             return
 
-        logger.info("Initializing in-process MCP client with 4 servers...")
+        logger.info("Initializing in-process MCP client with 5 servers...")
 
         # 1. Observability
         from agents.mcp_servers.observability.factory import create_observability_provider
@@ -260,6 +368,11 @@ class InProcessMCPClient:
         from agents.mcp_servers.code_diff.factory import create_code_diff_provider
         self._code_diff_provider = create_code_diff_provider(self._config)
         self._register_tools(_CODE_DIFF_TOOLS)
+
+        # 5. Repo Intelligence (KG bootstrap)
+        from agents.mcp_servers.repo_intelligence.factory import create_repo_intelligence_provider
+        self._repo_intelligence_provider = create_repo_intelligence_provider(self._config)
+        self._register_tools(_REPO_INTELLIGENCE_TOOLS)
 
         self._initialized = True
         tool_count = sum(len(t) for t in self._tools.values())
@@ -327,11 +440,14 @@ class InProcessMCPClient:
             await self._code_diff_provider.close()
         if self._deploy_provider and hasattr(self._deploy_provider, "close"):
             await self._deploy_provider.close()
+        if self._repo_intelligence_provider and hasattr(self._repo_intelligence_provider, "close"):
+            await self._repo_intelligence_provider.close()
 
         self._observability_provider = None
         self._deploy_provider = None
         self._incident_knowledge_provider = None
         self._code_diff_provider = None
+        self._repo_intelligence_provider = None
         self._tools.clear()
         self._initialized = False
 
@@ -349,6 +465,7 @@ class InProcessMCPClient:
             "deploy": self._deploy_provider,
             "incident_knowledge": self._incident_knowledge_provider,
             "code_diff": self._code_diff_provider,
+            "repo_intelligence": self._repo_intelligence_provider,
         }
         provider = providers.get(server)
         if provider is None:

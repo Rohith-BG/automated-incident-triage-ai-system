@@ -16,35 +16,52 @@ from typing import Any
 class InMemoryGraphStore:
     """Dict-based knowledge graph backed by services.json with mutation lock for dev mode."""
 
-    def __init__(self, services_json_path: Path) -> None:
+    def __init__(
+        self,
+        services_json_path: Path,
+        seed_from_fixtures: bool = True,
+    ) -> None:
         """Load and index the services graph.
 
         Args:
             services_json_path: Absolute path to services.json.
+            seed_from_fixtures: When False, start with an empty graph
+                (used to exercise the first-run KG bootstrap flow in dev).
         """
         self._lock = asyncio.Lock()
-        with open(services_json_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
 
-        # Index services by ID
-        self._services: dict[str, dict[str, Any]] = {
-            svc["id"]: svc for svc in raw["services"]
-        }
+        if seed_from_fixtures:
+            with open(services_json_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
 
-        # Index teams by ID
-        self._teams: dict[str, dict[str, str]] = {
-            team["id"]: team for team in raw["teams"]
-        }
+            # Index services by ID
+            self._services: dict[str, dict[str, Any]] = {
+                svc["id"]: svc for svc in raw["services"]
+            }
 
-        # Known non-service nodes (external APIs, databases)
-        self._external_apis: set[str] = set(
-            raw.get("external_apis", [])
-        )
-        self._databases: set[str] = set(
-            raw.get("databases", [])
-        )
+            # Index teams by ID
+            self._teams: dict[str, dict[str, str]] = {
+                team["id"]: team for team in raw["teams"]
+            }
+
+            # Known non-service nodes (external APIs, databases)
+            self._external_apis: set[str] = set(
+                raw.get("external_apis", [])
+            )
+            self._databases: set[str] = set(
+                raw.get("databases", [])
+            )
+        else:
+            self._services = {}
+            self._teams = {}
+            self._external_apis = set()
+            self._databases = set()
 
         self._rebuild_dependents_map()
+
+        # Staging graph for the KG bootstrap loop
+        self._staging_nodes: dict[str, dict[str, Any]] = {}
+        self._staging_edges: set[tuple[str, str]] = set()
 
     def _rebuild_dependents_map(self) -> None:
         """Rebuild reverse dependency index."""
@@ -162,6 +179,19 @@ class InMemoryGraphStore:
                 self._services[node_id].update(metadata)
             self._rebuild_dependents_map()
 
+    async def remove_node(self, node_id: str) -> None:
+        """Remove a service node and all incident edges."""
+        async with self._lock:
+            if node_id in self._services:
+                del self._services[node_id]
+            for svc in self._services.values():
+                deps = svc.get("dependencies", [])
+                if node_id in deps:
+                    deps.remove(node_id)
+            self._external_apis.discard(node_id)
+            self._databases.discard(node_id)
+            self._rebuild_dependents_map()
+
     async def update_metadata(self, node_id: str, field: str, value: Any) -> None:
         """Update property on dev node."""
         async with self._lock:
@@ -181,6 +211,8 @@ class InMemoryGraphStore:
                     await self.remove_dependency(m["from"], m["to"])
                 elif action == "add_node":
                     await self.add_node(m["node"], m.get("metadata", {}))
+                elif action == "remove_node":
+                    await self.remove_node(m["node"])
                 elif action == "update_metadata":
                     await self.update_metadata(m["node"], m["field"], m["value"])
                 applied += 1
@@ -188,3 +220,149 @@ class InMemoryGraphStore:
                 errors.append(str(e))
         return {"applied": applied, "errors": errors}
 
+    # ── Staging Methods (KG bootstrap loop) ──────────────
+
+    @staticmethod
+    def _apply_to_scratch(
+        nodes: dict[str, dict[str, Any]],
+        edges: set[tuple[str, str]],
+        mutation: dict[str, Any],
+    ) -> None:
+        """Apply a single mutation dict to a scratch (staging) graph."""
+        action = mutation.get("action")
+        if action == "add_node":
+            node_id = mutation["node"]
+            metadata = mutation.get("metadata", {})
+            if node_id in nodes:
+                nodes[node_id].update(metadata)
+            else:
+                nodes[node_id] = dict(metadata)
+        elif action == "add_dependency":
+            edges.add((mutation["from"], mutation["to"]))
+        elif action == "remove_dependency":
+            edges.discard((mutation["from"], mutation["to"]))
+        elif action == "update_metadata":
+            node_id = mutation["node"]
+            if node_id in nodes:
+                nodes[node_id][mutation["field"]] = mutation["value"]
+        elif action == "remove_node":
+            node_id = mutation["node"]
+            nodes.pop(node_id, None)
+            edges.difference_update(
+                (src, dst)
+                for src, dst in list(edges)
+                if src == node_id or dst == node_id
+            )
+
+    async def _staging_apply_mutations(
+        self, mutations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply mutations to the staging graph in memory."""
+        applied = 0
+        errors: list[str] = []
+        for m in mutations:
+            try:
+                self._apply_to_scratch(
+                    self._staging_nodes, self._staging_edges, m
+                )
+                applied += 1
+            except Exception as e:
+                errors.append(str(e))
+        return {"applied": applied, "errors": errors}
+
+    async def staging_has_content(self) -> bool:
+        """True when the staging graph holds any nodes or edges."""
+        return bool(self._staging_nodes) or bool(self._staging_edges)
+
+    async def staging_replace(
+        self, mutations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Replace the staging graph by applying *mutations* to a clean slate."""
+        async with self._lock:
+            self._staging_nodes.clear()
+            self._staging_edges.clear()
+            return await self._staging_apply_mutations(mutations)
+
+    async def staging_apply(
+        self, mutations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply *mutations* on top of the current staging graph."""
+        async with self._lock:
+            return await self._staging_apply_mutations(mutations)
+
+    async def staging_clear(self) -> None:
+        """Remove all staged nodes and edges."""
+        async with self._lock:
+            self._staging_nodes.clear()
+            self._staging_edges.clear()
+
+    async def staging_snapshot(self) -> dict[str, Any]:
+        """Return the current staging graph for visualization."""
+        async with self._lock:
+            nodes = [
+                {"id": node_id, "kind": props.get("kind", "service"), "properties": dict(props)}
+                for node_id, props in self._staging_nodes.items()
+            ]
+            edges = [
+                {"from": src, "to": dst, "type": "DEPENDS_ON", "evidence": "staged"}
+                for src, dst in sorted(self._staging_edges)
+            ]
+            return {"nodes": nodes, "edges": edges}
+
+    async def active_snapshot(self) -> dict[str, Any]:
+        """Return the current active graph for visualization."""
+        async with self._lock:
+            nodes = [
+                {"id": node_id, "kind": props.get("kind", "service"), "properties": dict(props)}
+                for node_id, props in self._services.items()
+            ]
+            edges = []
+            for src, props in self._services.items():
+                for dst in props.get("dependencies", []):
+                    edges.append({"from": src, "to": dst, "type": "DEPENDS_ON", "evidence": "active"})
+            return {"nodes": nodes, "edges": edges}
+
+
+    async def promote_staging(self) -> dict[str, Any]:
+        """Apply the staged graph into the active graph and clear staging."""
+        async with self._lock:
+            applied = 0
+            errors: list[str] = []
+            for node_id, props in self._staging_nodes.items():
+                try:
+                    self._add_node_locked(node_id, props)
+                    applied += 1
+                except Exception as e:
+                    errors.append(str(e))
+            for src, dst in self._staging_edges:
+                try:
+                    self._add_dependency_locked(src, dst)
+                    applied += 1
+                except Exception as e:
+                    errors.append(str(e))
+            self._rebuild_dependents_map()
+            self._staging_nodes.clear()
+            self._staging_edges.clear()
+            return {"applied": applied, "errors": errors}
+
+    def _add_node_locked(self, node_id: str, metadata: dict[str, Any]) -> None:
+        """Add/update a service node (caller must hold the lock)."""
+        if node_id not in self._services:
+            self._services[node_id] = {
+                "id": node_id,
+                "owner_team": metadata.get("owner_team", "platform-team"),
+                "dependencies": metadata.get("dependencies", []),
+                "repo": metadata.get("repo", ""),
+                "language": metadata.get("language", "Python"),
+                "alert_threshold": metadata.get("alert_threshold", "medium"),
+                "architecture_type": metadata.get("architecture_type", "microservice"),
+            }
+        else:
+            self._services[node_id].update(metadata)
+
+    def _add_dependency_locked(self, from_id: str, to_id: str) -> None:
+        """Add a dependency edge (caller must hold the lock)."""
+        if from_id in self._services:
+            deps = self._services[from_id].setdefault("dependencies", [])
+            if to_id not in deps:
+                deps.append(to_id)

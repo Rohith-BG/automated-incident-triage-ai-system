@@ -69,8 +69,9 @@ async def register(
 ) -> UserResponse:
     """Create a new user account.
 
-    Default role is ``team_member``. Admins can promote
-    users via a separate endpoint (future phase).
+    The very first registered user becomes the platform admin and
+    unlocks the onboarding / initial-setup flow (build + review KG).
+    Every subsequent registration defaults to ``team_member``.
     """
     logger.info("Received registration request for email: %s", payload.email)
     response = await controller.register(

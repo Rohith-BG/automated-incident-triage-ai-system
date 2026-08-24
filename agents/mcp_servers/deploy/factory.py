@@ -19,7 +19,12 @@ def create_deploy_provider(
 
     if backend == "github":
         from .github_provider import GitHubDeployProvider
-        return GitHubDeployProvider(token=config.GITHUB_TOKEN)
+        from agents.knowledge_graph.factory import create_kg_store
+
+        return GitHubDeployProvider(
+            token=config.GITHUB_TOKEN,
+            kg_store=create_kg_store(config),
+        )
 
     raise ValueError(
         f"Unknown DEPLOY_BACKEND: '{backend}'. "

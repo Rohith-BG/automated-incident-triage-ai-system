@@ -82,6 +82,94 @@ class GitHubClient:
             logger.error("Failed to fetch commit diff for %s/%s: %s", repo, commit_sha, e)
             return {"sha": commit_sha, "stats": {"additions": 0, "deletions": 0, "total": 0}, "files": []}
 
+    async def list_org_repos(
+        self, org: str, per_page: int = 100
+    ) -> list[dict[str, Any]]:
+        """List repositories for a GitHub organization."""
+        url = f"/orgs/{org}/repos"
+        logger.info("Listing repositories for org %s", org)
+        try:
+            resp = await self._client.get(
+                url, params={"per_page": per_page, "type": "all"}
+            )
+            resp.raise_for_status()
+            return [
+                {
+                    "name": r.get("name", ""),
+                    "repo": r.get("full_name", ""),
+                    "language": r.get("language"),
+                    "default_branch": r.get("default_branch", "main"),
+                    "description": r.get("description", ""),
+                }
+                for r in resp.json()
+            ]
+        except Exception as e:
+            logger.error("Failed to list repos for org %s: %s", org, e)
+            return []
+
+    async def get_repo_tree(
+        self, repo: str, recursive: bool = True
+    ) -> list[dict[str, Any]]:
+        """Fetch the repository file tree via the git trees API."""
+        url = f"/repos/{repo}/git/trees/HEAD"
+        logger.info("Fetching repo tree for %s", repo)
+        try:
+            resp = await self._client.get(
+                url, params={"recursive": "1" if recursive else "0"}
+            )
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            tree = resp.json().get("tree", [])
+            return [
+                {"path": t.get("path", ""), "type": t.get("type", "blob")}
+                for t in tree
+            ]
+        except Exception as e:
+            logger.error("Failed to fetch tree for %s: %s", repo, e)
+            return []
+
+    async def get_file_content(
+        self, repo: str, path: str
+    ) -> str:
+        """Fetch the decoded content of a file in a repository."""
+        url = f"/repos/{repo}/contents/{path}"
+        logger.info("Fetching file %s from %s", path, repo)
+        try:
+            resp = await self._client.get(
+                url, params={"ref": "HEAD"}
+            )
+            if resp.status_code == 404:
+                return ""
+            resp.raise_for_status()
+            data = resp.json()
+            content = data.get("content", "")
+            if not content:
+                return ""
+            import base64
+            return base64.b64decode(content).decode("utf-8", errors="replace")
+        except Exception as e:
+            logger.error("Failed to fetch file %s from %s: %s", path, repo, e)
+            return ""
+
+    async def get_repo_meta(self, repo: str) -> dict[str, Any]:
+        """Fetch repository metadata."""
+        url = f"/repos/{repo}"
+        logger.info("Fetching repo metadata for %s", repo)
+        try:
+            resp = await self._client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            return {
+                "repo": data.get("full_name", repo),
+                "default_branch": data.get("default_branch", "main"),
+                "language": data.get("language"),
+                "description": data.get("description", ""),
+            }
+        except Exception as e:
+            logger.error("Failed to fetch repo metadata for %s: %s", repo, e)
+            return {"repo": repo, "default_branch": "main", "language": None, "description": ""}
+
     async def get_pr_changes(self, repo: str, pr_number: int) -> dict[str, Any]:
         """Fetch PR files and diffs."""
         url = f"/repos/{repo}/pulls/{pr_number}/files"

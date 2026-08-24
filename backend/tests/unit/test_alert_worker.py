@@ -1,5 +1,7 @@
 """Unit test for SQS AlertWorker."""
 
+import json
+
 import pytest
 import pytest_asyncio
 from backend.app.core.database import AsyncSessionLocal, Base, engine
@@ -55,3 +57,46 @@ async def test_alert_worker_deduplicates_active_incident() -> None:
     res2 = await worker.process_alert(msg2)
     assert res2["is_duplicate"] is True
     assert res2["incident_id"] == res1["incident_id"]
+
+
+class _FakeSQS:
+    """In-memory SQS double recording send/delete calls."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+        self.deleted: list[str] = []
+
+    async def send_message(self, QueueUrl: str, MessageBody: str) -> None:
+        self.sent.append((QueueUrl, MessageBody))
+
+    async def delete_message(self, QueueUrl: str, ReceiptHandle: str) -> None:
+        self.deleted.append(ReceiptHandle)
+
+
+@pytest.mark.asyncio
+async def test_alert_worker_routes_poison_message_to_dlq() -> None:
+    """A malformed SQS payload is forwarded to the DLQ and deleted (Rule 10)."""
+    worker = AlertWorker(
+        session_factory=AsyncSessionLocal,
+        queue_url="https://sqs/alerts",
+        dlq_url="https://sqs/alerts-dlq",
+    )
+    fake = _FakeSQS()
+    body = json.dumps({"service_id": "missing-alert-message"})
+
+    await worker._send_to_dlq(fake, body, "receipt-1")
+
+    assert fake.sent == [("https://sqs/alerts-dlq", body)]
+    assert fake.deleted == ["receipt-1"]
+
+
+@pytest.mark.asyncio
+async def test_alert_worker_skips_dlq_when_unconfigured() -> None:
+    """Without a DLQ URL, poison messages are left to the visibility timeout."""
+    worker = AlertWorker(session_factory=AsyncSessionLocal)
+    fake = _FakeSQS()
+
+    await worker._send_to_dlq(fake, "{}", "receipt-1")
+
+    assert fake.sent == []
+    assert fake.deleted == []

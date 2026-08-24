@@ -7,6 +7,8 @@ FastAPI's ``Depends()`` mechanism.
 """
 
 import logging
+from typing import AsyncIterator
+
 from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,11 +25,13 @@ from .repositories.incident import IncidentRepository
 from .repositories.incident_knowledge import IncidentKnowledgeRepository
 from .repositories.incident_resolution import IncidentResolutionRepository
 from .repositories.kg_change_proposal import KGChangeProposalRepository
+from .repositories.notification import NotificationRepository
 from .repositories.service_registry import ServiceRegistryRepository
 from .repositories.user import UserRepository
 from .services.auth import AuthService
 from .services.incident import IncidentService
 from .services.incident_knowledge import IncidentKnowledgeService
+from .services.notification import NotificationService
 from .services.service_registry import KGProposalService, ServiceRegistryService
 
 logger = logging.getLogger(__name__)
@@ -133,11 +137,65 @@ def get_kg_proposal_repository(
     return KGChangeProposalRepository(session=db)
 
 
-def get_kg_proposal_service(
+async def get_kg_proposal_service(
     repo: KGChangeProposalRepository = Depends(get_kg_proposal_repository),
-) -> KGProposalService:
-    """Provide a KGProposalService."""
-    return KGProposalService(proposal_repo=repo)
+) -> AsyncIterator[KGProposalService]:
+    """Provide a KGProposalService wired with the active graph store.
+
+    Injects the same ``create_kg_store`` used by the KG bootstrap agent so
+    approving a proposal actually promotes the staged graph / applies
+    mutations (Rule 26), and wires the deploy MCP client for the feedback
+    re-analysis loop. The MCP client is initialized before use and shut
+    down when the request completes.
+    """
+    from agents.config import AgentSettings
+    from agents.knowledge_graph.factory import create_kg_store
+    from agents.mcp_client.factory import create_mcp_client
+
+    config = AgentSettings()
+    deploy_client = create_mcp_client(config)
+    await deploy_client.initialize()
+    try:
+        yield KGProposalService(
+            proposal_repo=repo,
+            kg_store=create_kg_store(config),
+            deploy_mcp_client=deploy_client,
+        )
+    finally:
+        await deploy_client.shutdown()
+
+
+# ── Notification domain ────────────────────────────────
+
+
+def get_notification_repository(
+    db: AsyncSession = Depends(get_db),
+) -> NotificationRepository:
+    """Provide a NotificationRepository."""
+    return NotificationRepository(session=db)
+
+
+def get_notification_service(
+    repo: NotificationRepository = Depends(get_notification_repository),
+) -> NotificationService:
+    """Provide a NotificationService."""
+    return NotificationService(repository=repo)
+
+
+# ── KG Bootstrap domain ─────────────────────────────────
+
+
+def get_kg_bootstrap_service(
+    proposal_repo: KGChangeProposalRepository = Depends(get_kg_proposal_repository),
+    notification_repo: NotificationRepository = Depends(get_notification_repository),
+) -> "KgBootstrapService":
+    """Provide a KgBootstrapService with injected repositories."""
+    from backend.app.services.kg_bootstrap import KgBootstrapService
+
+    return KgBootstrapService(
+        proposal_repo=proposal_repo,
+        notification_repo=notification_repo,
+    )
 
 
 # ── Onboarding domain ───────────────────────────────────

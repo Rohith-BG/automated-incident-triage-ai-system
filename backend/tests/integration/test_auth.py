@@ -52,7 +52,7 @@ async def clean_database():
 
 @pytest.mark.asyncio
 async def test_register_route_success() -> None:
-    """POST /auth/register creates a user with default role team_member."""
+    """POST /auth/register promotes the very first user to admin."""
     resp = client.post(
         "/auth/register",
         json={
@@ -66,10 +66,34 @@ async def test_register_route_success() -> None:
     data = resp.json()
     assert data["email"] == "developer@example.com"
     assert data["full_name"] == "Dev User"
-    assert data["role"] == UserRole.TEAM_MEMBER.value
+    assert data["role"] == UserRole.ADMIN.value
     assert data["is_active"] is True
     assert "id" in data
     assert "password" not in data
+
+
+@pytest.mark.asyncio
+async def test_register_second_user_is_team_member() -> None:
+    """POST /auth/register defaults later users to team_member."""
+    client.post(
+        "/auth/register",
+        json={
+            "email": "first@example.com",
+            "password": "securepassword123",
+            "full_name": "First User",
+        },
+    )
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "second@example.com",
+            "password": "securepassword123",
+            "full_name": "Second User",
+        },
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["role"] == UserRole.TEAM_MEMBER.value
 
 
 @pytest.mark.asyncio
@@ -219,7 +243,15 @@ async def test_me_route_success() -> None:
 @pytest.mark.asyncio
 async def test_rbac_restrictions() -> None:
     """Test role-based access restrictions on test routes."""
-    # Register default user (developer/team_member)
+    # First user becomes admin (bootstrap); register a second team member
+    client.post(
+        "/auth/register",
+        json={
+            "email": "admin@example.com",
+            "password": "securepassword123",
+            "full_name": "Admin User",
+        },
+    )
     client.post(
         "/auth/register",
         json={

@@ -68,9 +68,7 @@ class DBIncidentKnowledgeProvider:
                 select(IncidentResolution)
                 .join(Incident, Incident.id == IncidentResolution.incident_id)
                 .where(Incident.service_id == service)
-                .order_order_by = None  # Sort newest-first in Python or SQL
             )
-            # Wait, SQLAlchemy join order_by
             stmt = stmt.order_by(IncidentResolution.created_at.desc()).limit(limit)
             res = await session.execute(stmt)
             resolutions = res.scalars().all()

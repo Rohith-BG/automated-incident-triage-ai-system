@@ -2,7 +2,9 @@
 Mock deploy provider for development and testing.
 """
 
+import json
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,28 @@ class MockDeployProvider:
     def __init__(self, data_path: Optional[Any] = None) -> None:
         """Initialise mock provider."""
         self._data_path = data_path
+        self._cache: Optional[list[dict[str, Any]]] = None
+
+    async def _load_deploys(self) -> list[dict[str, Any]]:
+        """Load and cache the mock deploys fixture."""
+        if self._cache is None:
+            path = Path(self._data_path) if self._data_path else None
+            if path and path.exists():
+                with open(path, "r", encoding="utf-8") as f:
+                    self._cache = json.load(f)
+            else:
+                self._cache = []
+        return self._cache
+
+    async def get_recent_deploys(
+        self,
+        service: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Return recent fixture deployments for a service."""
+        deploys = await self._load_deploys()
+        matches = [d for d in deploys if d.get("service") == service]
+        return matches[:limit]
 
     async def analyze_deployment(
         self,
