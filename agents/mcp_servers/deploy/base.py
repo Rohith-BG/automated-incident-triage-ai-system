@@ -9,6 +9,18 @@ from typing import Any, Optional, Protocol, runtime_checkable
 class DeployProvider(Protocol):
     """Deployment codebase analyzer contract (CI/CD Deploy Agent)."""
 
+    async def get_recent_deploys(
+        self,
+        service: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Return recent deployments for a service.
+
+        Used by the orchestrator's deploy investigation node to flag
+        risky recent changes around the incident time window.
+        """
+        ...
+
     async def analyze_deployment(
         self,
         service_id: str,

@@ -19,7 +19,15 @@ def create_code_diff_provider(
 
     if backend == "github":
         from .github_provider import GitHubCodeDiffProvider
-        return GitHubCodeDiffProvider(token=config.GITHUB_TOKEN)
+        from agents.knowledge_graph.factory import create_kg_store
+
+        # Wire the KG store as the registry so service_id -> repo
+        # resolution works at runtime (previously left None, causing
+        # every code_diff call to raise ValueError).
+        return GitHubCodeDiffProvider(
+            token=config.GITHUB_TOKEN,
+            registry_service=create_kg_store(config),
+        )
 
     raise ValueError(
         f"Unknown CODE_DIFF_BACKEND: '{backend}'. "

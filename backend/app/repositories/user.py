@@ -72,3 +72,12 @@ class UserRepository:
         stmt = select(User).where(User.email == email)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def count(self) -> int:
+        """Count all registered users.
+
+        Used to bootstrap the first user as platform admin.
+        """
+        stmt = select(User.id)
+        result = await self._session.execute(stmt)
+        return len(result.all())

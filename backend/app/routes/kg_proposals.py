@@ -52,7 +52,7 @@ async def approve_proposal(
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     service: KGProposalService = Depends(get_kg_proposal_service),
 ) -> Any:
-    """Approve a KG proposal and apply changes to Knowledge Graph (Admin only)."""
+    """Approve a KG proposal and apply changes to Knowledge Graph (admin only)."""
     return await service.approve_proposal(proposal_id=proposal_id, reviewer=current_user.email)
 
 
@@ -66,7 +66,7 @@ async def reject_proposal(
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     service: KGProposalService = Depends(get_kg_proposal_service),
 ) -> Any:
-    """Reject a proposal without applying changes (Admin only)."""
+    """Reject a proposal without applying changes (admin only)."""
     return await service.reject_proposal(proposal_id=proposal_id, reviewer=current_user.email, reason=reason)
 
 
@@ -80,7 +80,7 @@ async def submit_feedback(
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     service: KGProposalService = Depends(get_kg_proposal_service),
 ) -> Any:
-    """Submit correction feedback, triggering agent re-analysis loop (Admin only)."""
+    """Submit correction feedback, triggering agent re-analysis loop (admin only)."""
     return await service.submit_feedback(
         proposal_id=proposal_id,
         reviewer=current_user.email,

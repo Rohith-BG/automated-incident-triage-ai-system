@@ -32,10 +32,10 @@ router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 )
 async def discover_topology(
     payload: DiscoverTopologyRequest,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SRE)),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
     controller: OnboardingController = Depends(get_onboarding_controller),
 ) -> OnboardingResultResponse:
-    """Discover service topology, upsert services in registry, and generate pending KG proposal for human review."""
+    """Discover topology, upsert services, and generate a pending KG proposal (admin only)."""
     return await controller.discover_topology(payload)
 
 

@@ -15,10 +15,70 @@ logger = logging.getLogger(__name__)
 class GitHubDeployProvider:
     """Production DeployProvider hitting GitHub REST API and analyzing code diffs."""
 
-    def __init__(self, token: Optional[str] = None, llM_client: Optional[Any] = None) -> None:
-        """Initialise with GitHub client and optional LLM client."""
+    def __init__(
+        self,
+        token: Optional[str] = None,
+        llm_client: Optional[Any] = None,
+        kg_store: Optional[Any] = None,
+    ) -> None:
+        """Initialise with GitHub client, optional LLM client, and repo registry.
+
+        Args:
+            token: GitHub PAT.
+            llm_client: Optional LLM adapter (unused by the deterministic path).
+            kg_store: Knowledge graph store used to resolve service -> repo.
+        """
         self._github_client = GitHubClient(token=token)
         self._llm_client = llm_client
+        self._kg_store = kg_store
+
+    async def get_recent_deploys(
+        self,
+        service: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Return recent deployments for a service.
+
+        Resolves the service's repo via the knowledge graph and maps
+        recent commits as deployment evidence. No LLM involved — this is
+        deterministic, evidence-carrying data for the orchestrator.
+        """
+        repo = await self._resolve_repo(service)
+        commits = await self._github_client.get_commits(repo, limit=limit)
+        return [
+            {
+                "service": service,
+                "commit_sha": c.get("sha", ""),
+                "author": c.get("author", ""),
+                "timestamp": c.get("date", ""),
+                "message": c.get("message", ""),
+                "status": "unknown",
+            }
+            for c in commits
+        ]
+
+    async def _resolve_repo(self, service: str) -> str:
+        """Resolve service_id to a repo slug via the knowledge graph.
+
+        Raises:
+            ValueError: When the service has no repo recorded in the KG.
+        """
+        if self._kg_store is None:
+            from agents.config import agent_settings
+            from agents.knowledge_graph.factory import create_kg_store
+
+            self._kg_store = create_kg_store(agent_settings)
+        try:
+            repo = await self._kg_store.get_repo_for_service(service)
+            if repo:
+                return repo
+        except Exception as e:
+            logger.warning("KG lookup failed for %s: %s", service, e)
+
+        raise ValueError(
+            f"Service '{service}' has no repo recorded in the knowledge graph. "
+            "Run the KG bootstrap flow for this service first."
+        )
 
     async def analyze_deployment(
         self,

@@ -85,8 +85,53 @@ class KnowledgeGraphStore(Protocol):
         """Add or update a service/module node."""
         ...
 
+    async def remove_node(
+        self, node_id: str
+    ) -> None:
+        """Remove a service/module node and all incident edges."""
+        ...
+
     async def update_metadata(
         self, node_id: str, field: str, value: Any
     ) -> None:
         """Update a metadata property on an existing node."""
         ...
+
+    # ── Staging Methods (KG bootstrap loop) ──────────────
+
+    async def staging_has_content(self) -> bool:
+        """True when the staging graph holds any nodes or edges."""
+        ...
+
+    async def staging_replace(
+        self, mutations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Replace the staging graph with the result of applying *mutations*
+        to a clean slate. Returns an {applied, errors} summary."""
+        ...
+
+    async def staging_apply(
+        self, mutations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Apply *mutations* on top of the current staging graph."""
+        ...
+
+    async def staging_clear(self) -> None:
+        """Remove all staged nodes and edges."""
+        ...
+
+    async def staging_snapshot(self) -> dict[str, Any]:
+        """Return the current staging graph for visualization:
+        {"nodes": [{"id", "kind", "properties"}], "edges": [{"from", "to", "evidence"}]}."""
+        ...
+
+    async def active_snapshot(self) -> dict[str, Any]:
+        """Return the current active graph for visualization:
+        {"nodes": [{"id", "kind", "properties"}], "edges": [{"from", "to", "type", "evidence"}]}."""
+        ...
+
+    async def promote_staging(self) -> dict[str, Any]:
+        """Apply the staged graph into the active graph and clear staging.
+        Returns an {applied, errors} summary."""
+        ...
+

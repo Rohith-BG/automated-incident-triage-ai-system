@@ -14,6 +14,8 @@ from ..repositories.service_registry import ServiceRegistryRepository
 
 logger = logging.getLogger(__name__)
 
+KG_BOOTSTRAP_COMPONENT = "kg-bootstrap"
+
 
 class ServiceRegistryService:
     """Service layer business logic for ServiceRegistry."""
@@ -146,7 +148,16 @@ class KGProposalService:
         if proposal.status != ProposalStatus.PENDING:
             raise ValueError(f"Cannot approve proposal in state '{proposal.status}'")
 
-        if self._kg_store:
+        if proposal.component_id == KG_BOOTSTRAP_COMPONENT:
+            # Bootstrap approval promotes the staged graph into the
+            # active graph (Rule 26: human approval required first).
+            if self._kg_store:
+                logger.info(
+                    "Promoting staged bootstrap graph for proposal %s",
+                    proposal_id,
+                )
+                await self._kg_store.promote_staging()
+        elif self._kg_store:
             logger.info("Applying %d mutations from proposal %s to KG", len(proposal.proposed_changes), proposal_id)
             await self._kg_store.apply_mutations(proposal.proposed_changes)
 
@@ -191,7 +202,11 @@ class KGProposalService:
 
         # 2. Call deploy MCP client if available to re-analyze with feedback
         new_changes = proposal.proposed_changes
-        if self._deploy_mcp_client:
+        if proposal.component_id == KG_BOOTSTRAP_COMPONENT:
+            new_changes = await self._apply_bootstrap_feedback(
+                proposal, feedback
+            )
+        elif self._deploy_mcp_client:
             try:
                 new_analysis = await self._deploy_mcp_client.call_tool(
                     server="deploy",
@@ -220,6 +235,61 @@ class KGProposalService:
         )
 
         # Mark original superseded
-        await self._proposal_repo.update_status(proposal_id=proposal.id, status="superseded")
+        await self._proposal_repo.update_status(
+            proposal_id=proposal.id,
+            status=ProposalStatus.SUPERSEDED.value,
+        )
 
         return new_proposal
+
+    async def _apply_bootstrap_feedback(
+        self,
+        proposal: KGChangeProposal,
+        feedback: str,
+    ) -> list[dict[str, Any]]:
+        """Run the KG bootstrap revision loop for feedback on a bootstrap proposal.
+
+        Builds the parent KgBootstrapState from the proposal, applies the
+        feedback via the kg_builder workflow (deterministic intent parsing,
+        entity resolution, MCP verification), and returns the updated
+        mutation set with the staged graph already revised.
+        """
+        from agents.config import AgentSettings
+        from agents.knowledge_graph.factory import create_kg_store
+        from agents.mcp_client.factory import create_mcp_client
+        from agents.kg_builder.graph import apply_feedback_revision
+
+        config = AgentSettings()
+        parent_state = await self._bootstrap_state_from_proposal(proposal)
+
+        mcp_client = create_mcp_client(config)
+        await mcp_client.initialize()
+        try:
+            kg_store = self._kg_store or create_kg_store(config)
+            updated = await apply_feedback_revision(
+                kg_store=kg_store,
+                mcp_client=mcp_client,
+                feedback_text=feedback,
+                parent_state=parent_state,
+                config=config,
+            )
+            return updated.mutations
+        finally:
+            await mcp_client.shutdown()
+
+    @staticmethod
+    async def _bootstrap_state_from_proposal(
+        proposal: KGChangeProposal,
+    ):
+        """Rebuild a KgBootstrapState from a stored bootstrap proposal."""
+        from agents.kg_builder.state import KgBootstrapState
+
+        return KgBootstrapState(
+            architecture_type=proposal.architecture_type,
+            source="services_json",
+            org="",
+            repo=proposal.repo,
+            owner_team="platform-team",
+            mutations=list(proposal.proposed_changes),
+            proposal_id=proposal.id,
+        )

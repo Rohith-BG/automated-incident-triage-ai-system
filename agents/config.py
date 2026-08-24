@@ -33,6 +33,9 @@ class AgentSettings(BaseSettings):
     DEPLOY_BACKEND: Literal["mock", "github"] = "mock"
     INCIDENT_KNOWLEDGE_BACKEND: Literal["mock", "db"] = "mock"
     CODE_DIFF_BACKEND: Literal["mock", "github"] = "mock"
+    REPO_INTELLIGENCE_BACKEND: Literal[
+        "mock", "github"
+    ] = "mock"
     LLM_PROVIDER: Literal[
         "google", "openai", "anthropic", "local"
     ] = "google"
@@ -71,6 +74,21 @@ class AgentSettings(BaseSettings):
     # ── GitHub ───────────────────────────────────────────
     GITHUB_TOKEN: Optional[str] = None
     GITHUB_API_BASE_URL: str = "https://api.github.com"
+
+    # ── KG bootstrap ─────────────────────────────────────
+    KG_BOOTSTRAP_ENABLED: bool = False
+    KG_BOOTSTRAP_SOURCE: Literal[
+        "github_org", "github_repo", "services_json"
+    ] = "github_org"
+    KG_BOOTSTRAP_ORG: Optional[str] = None
+    KG_BOOTSTRAP_REPO: Optional[str] = None
+    KG_BOOTSTRAP_ARCHITECTURE: Literal[
+        "microservice", "monolith"
+    ] = "microservice"
+    KG_BOOTSTRAP_OWNER_TEAM: str = "platform-team"
+    # Start the dev in-memory graph empty so the first-run
+    # onboarding / "Build KG" flow can be exercised end-to-end.
+    KG_IN_MEMORY_START_EMPTY: bool = False
 
     # ── Orchestrator ─────────────────────────────────────
     CONFIDENCE_THRESHOLD: float = 0.6

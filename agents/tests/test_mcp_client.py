@@ -14,6 +14,7 @@ def client() -> InProcessMCPClient:
         DEPLOY_BACKEND="mock",
         INCIDENT_KNOWLEDGE_BACKEND="mock",
         CODE_DIFF_BACKEND="mock",
+        REPO_INTELLIGENCE_BACKEND="mock",
     )
     return InProcessMCPClient(config)
 
@@ -26,12 +27,21 @@ async def test_mcp_client_workflow(client: InProcessMCPClient) -> None:
 
     # 2. list_tools verifies registration
     tools = client.list_tools()
-    # 5 observability, 2 deploy, 4 incident_knowledge, 3 code_diff = 14 tools total
-    assert len(tools) == 14
+    # 5 observability, 3 deploy, 4 incident_knowledge, 3 code_diff,
+    # 6 repo_intelligence = 21 tools total
+    assert len(tools) == 21
 
     # Filtered tool listing
     obs_tools = client.list_tools(server="observability")
     assert len(obs_tools) == 5
+
+    # Deploy tools registered (including get_recent_deploys)
+    deploy_tools = client.list_tools(server="deploy")
+    assert len(deploy_tools) == 3
+
+    # Repo intelligence tools registered (KG bootstrap server)
+    ri_tools = client.list_tools(server="repo_intelligence")
+    assert len(ri_tools) == 6
 
     # 3. Call tool on observability server
     logs = await client.call_tool(
@@ -54,6 +64,15 @@ async def test_mcp_client_workflow(client: InProcessMCPClient) -> None:
     )
     assert analysis["service_id"] == "payment-service"
     assert len(analysis["proposed_changes"]) > 0
+
+    # 4b. Call tool on deploy server (get_recent_deploys)
+    recent_deploys = await client.call_tool(
+        server="deploy",
+        tool_name="get_recent_deploys",
+        arguments={"service": "payment-service", "limit": 5},
+    )
+    assert len(recent_deploys) == 2
+    assert recent_deploys[0]["deploy_id"] == "dep-101"
 
     # 5. Call tool on incident_knowledge server
     runbooks = await client.call_tool(

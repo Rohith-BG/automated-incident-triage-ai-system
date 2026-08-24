@@ -25,9 +25,10 @@ def auth_service(mock_repo):
 
 @pytest.mark.asyncio
 async def test_register_success(auth_service, mock_repo) -> None:
-    """register() creates a user if the email is not registered."""
+    """register() creates a team member when users already exist."""
     mock_repo.get_by_email = AsyncMock(return_value=None)
-    
+    mock_repo.count = AsyncMock(return_value=3)
+
     # Mock create to return a User model
     mock_user = User(
         id="user-123",
@@ -46,6 +47,7 @@ async def test_register_success(auth_service, mock_repo) -> None:
 
     assert result == mock_user
     mock_repo.get_by_email.assert_called_once_with("new@example.com")
+    mock_repo.count.assert_called_once_with()
     # Verify that mock_repo.create was called with hashed password
     mock_repo.create.assert_called_once()
     kwargs = mock_repo.create.call_args.kwargs
@@ -53,6 +55,31 @@ async def test_register_success(auth_service, mock_repo) -> None:
     assert kwargs["full_name"] == "Alice Smith"
     assert kwargs["role"] == UserRole.TEAM_MEMBER
     assert verify_password("password123", kwargs["hashed_password"]) is True
+
+
+@pytest.mark.asyncio
+async def test_register_first_user_becomes_admin(auth_service, mock_repo) -> None:
+    """register() promotes the very first user to admin (bootstrap)."""
+    mock_repo.get_by_email = AsyncMock(return_value=None)
+    mock_repo.count = AsyncMock(return_value=0)
+
+    mock_user = User(
+        id="user-admin",
+        email="founder@example.com",
+        hashed_password="hashed_pass",
+        full_name="Founder",
+        role=UserRole.ADMIN,
+    )
+    mock_repo.create = AsyncMock(return_value=mock_user)
+
+    result = await auth_service.register(
+        email="founder@example.com",
+        password="password123",
+        full_name="Founder",
+    )
+
+    assert result == mock_user
+    assert mock_repo.create.call_args.kwargs["role"] == UserRole.ADMIN
 
 
 @pytest.mark.asyncio

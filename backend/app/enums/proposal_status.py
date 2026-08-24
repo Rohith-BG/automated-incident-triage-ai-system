@@ -14,3 +14,4 @@ class ProposalStatus(StrEnum):
     APPROVED = "approved"
     REJECTED = "rejected"
     FEEDBACK = "feedback"
+    SUPERSEDED = "superseded"
