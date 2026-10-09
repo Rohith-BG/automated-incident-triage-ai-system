@@ -34,13 +34,18 @@ class AuthService:
         email: str,
         password: str,
         full_name: str,
+        role: UserRole = UserRole.DEVELOPER,
     ) -> User:
         """Register a new user.
+
+        Called by admins only (route layer enforces RBAC). The admin
+        chooses the role for the new user.
 
         Args:
             email: Unique email address.
             password: Plain-text password (min 8 chars).
             full_name: Display name.
+            role: RBAC role assigned by the admin.
 
         Returns:
             Newly created User.
@@ -50,16 +55,13 @@ class AuthService:
         """
         existing = await self._repo.get_by_email(email)
         if existing:
-            logger.warning("Registration failed: Email '%s' is already registered", email)
+            logger.warning(
+                "Registration failed: Email '%s' is already registered",
+                email,
+            )
             raise ConflictException(
                 f"Email '{email}' is already registered."
             )
-
-        # Bootstrap-admin: the very first account owns the platform and
-        # can open the onboarding / initial-setup flow (build + review KG).
-        # Every later registration is a plain team member.
-        is_first_user = await self._repo.count() == 0
-        role = UserRole.ADMIN if is_first_user else UserRole.TEAM_MEMBER
 
         hashed = hash_password(password)
         user = await self._repo.create(
@@ -68,13 +70,7 @@ class AuthService:
             full_name=full_name,
             role=role,
         )
-        if is_first_user:
-            logger.info(
-                "Bootstrap admin created for first registration: %s (%s)",
-                user.id,
-                email,
-            )
-        logger.info("Registered new user %s (%s)", user.id, email)
+        logger.info("Registered new user %s (%s, role=%s)", user.id, email, role)
         return user
 
     async def login(
@@ -148,3 +144,74 @@ class AuthService:
         new_refresh = create_refresh_token(token_data)
         logger.info("Token rotation completed successfully for user ID: %s", user_id)
         return new_access, new_refresh
+
+    async def list_users(self) -> list[User]:
+        """Return all users.
+
+        Called by admin-only route to populate the management table.
+
+        Returns:
+            List of all User instances.
+        """
+        return await self._repo.list_all()
+
+    async def update_user(
+        self,
+        *,
+        user_id: str,
+        admin_id: str,
+        full_name: str | None = None,
+        role: str | None = None,
+        is_active: bool | None = None,
+    ) -> User:
+        """Update a user's profile fields.
+
+        Args:
+            user_id: Target user ID.
+            admin_id: ID of the admin performing the update.
+            full_name: New display name (optional).
+            role: New RBAC role (optional).
+            is_active: New active flag (optional).
+
+        Returns:
+            Updated User.
+
+        Raises:
+            NotFoundException: If user_id doesn't exist.
+            BadRequestException: If admin tries to deactivate
+                themselves.
+        """
+        from ..exceptions import BadRequestException, NotFoundException
+
+        user = await self._repo.get_by_id(user_id)
+        if not user:
+            raise NotFoundException(f"User '{user_id}' not found.")
+
+        if is_active is False and user_id == admin_id:
+            raise BadRequestException(
+                "Cannot deactivate your own account."
+            )
+
+        if role is not None and role not in (
+            UserRole.ADMIN,
+            UserRole.DEVELOPER,
+        ):
+            raise BadRequestException(
+                f"Invalid role '{role}'. Must be 'admin' or 'developer'."
+            )
+
+        updated = await self._repo.update(
+            user,
+            full_name=full_name,
+            role=role,
+            is_active=is_active,
+        )
+        logger.info(
+            "Admin %s updated user %s (name=%s, role=%s, active=%s)",
+            admin_id,
+            user_id,
+            full_name,
+            role,
+            is_active,
+        )
+        return updated

@@ -89,6 +89,18 @@ class KgBootstrapService:
                 NotificationRepository(session=session)
             )
 
+            # Supersede any previous pending bootstrap proposals so only the fresh build is pending
+            existing_pending = await proposal_repo.list_proposals(
+                status=ProposalStatus.PENDING, limit=50
+            )
+            for prev in existing_pending:
+                if prev.component_id == KG_BOOTSTRAP_COMPONENT:
+                    await proposal_repo.update_status(
+                        proposal_id=prev.id,
+                        status=ProposalStatus.SUPERSEDED,
+                        admin_feedback="Superseded by newer KG bootstrap run",
+                    )
+
             proposal = await proposal_repo.create(
                 service_id=repo_slug or org_slug or "kg-bootstrap",
                 commit_sha=KG_BOOTSTRAP_COMMIT,
@@ -159,6 +171,11 @@ class KgBootstrapService:
                 bootstrap_approved[0].id if bootstrap_approved else None
             ),
             "pending_count": len(bootstrap_pending),
+            "source": self._config.KG_BOOTSTRAP_SOURCE,
+            "repo": self._config.KG_BOOTSTRAP_REPO,
+            "org": self._config.KG_BOOTSTRAP_ORG,
+            "architecture_type": self._config.KG_BOOTSTRAP_ARCHITECTURE,
+            "owner_team": self._config.KG_BOOTSTRAP_OWNER_TEAM,
         }
 
     async def get_staging_snapshot(self) -> dict[str, Any]:
