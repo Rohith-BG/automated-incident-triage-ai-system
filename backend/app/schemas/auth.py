@@ -14,7 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
-    """Payload for user registration."""
+    """Payload for user registration (admin-only)."""
 
     email: str = Field(
         ...,
@@ -35,6 +35,11 @@ class RegisterRequest(BaseModel):
         max_length=200,
         description="Full display name.",
         examples=["Alice Smith"],
+    )
+    role: str = Field(
+        default="developer",
+        description="RBAC role: 'admin' or 'developer'.",
+        examples=["developer"],
     )
 
 
@@ -85,3 +90,29 @@ class MessageResponse(BaseModel):
     """Simple message response."""
 
     message: str
+
+
+class UserUpdateRequest(BaseModel):
+    """Payload for updating a user (admin-only)."""
+
+    full_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Updated display name.",
+    )
+    role: str | None = Field(
+        default=None,
+        description="Updated RBAC role: 'admin' or 'developer'.",
+    )
+    is_active: bool | None = Field(
+        default=None,
+        description="Activate or deactivate the account.",
+    )
+
+
+class UserListResponse(BaseModel):
+    """List of users returned by admin listing endpoint."""
+
+    users: list[UserResponse]
+    total: int
