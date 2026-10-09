@@ -5,11 +5,15 @@ Configures async SQLAlchemy engine and session makers, supporting
 PostgreSQL in production and a lightweight SQLite fallback in development.
 """
 
+import asyncio
 import logging
 import sys
-from typing import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator
 
-from sqlalchemy import text
+
+from sqlalchemy import event, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     create_async_engine,
@@ -23,9 +27,43 @@ logger = logging.getLogger(__name__)
 
 is_testing = "pytest" in sys.modules
 
-# Initial database URLs
+# Initial database URLs — normalise PaaS-provided postgres:// schemes
+# (Render, Heroku, Railway emit postgres:// but SQLAlchemy needs
+# postgresql+asyncpg://).
 pg_url = settings.DATABASE_URL
+if pg_url.startswith("postgres://"):
+    pg_url = pg_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif pg_url.startswith("postgresql://"):
+    pg_url = pg_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 sqlite_url = "sqlite+aiosqlite:///:memory:" if is_testing else "sqlite+aiosqlite:///./triage.db"
+
+# SQLite serialises writers: a second connection writing while another holds
+# the write lock fails outright after the busy timeout. A background
+# investigation persists its result concurrently with request handling and the
+# workers, so WAL (readers never block the writer) plus a generous busy
+# timeout is what keeps those writes from raising "database is locked".
+_SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragmas(
+    dbapi_connection: Any, _connection_record: Any
+) -> None:
+    """Apply concurrency pragmas to every new SQLite connection."""
+    # Guard: only execute PRAGMAs on SQLite connections.
+    module = type(dbapi_connection).__module__ or ""
+    if "sqlite" not in module and "aiosqlite" not in module:
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        if not is_testing:
+            # In-memory SQLite has no journal file to write ahead.
+            cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
 
 # Create engines
 pg_engine = None
@@ -55,6 +93,37 @@ AsyncSessionLocal = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+# ── SQLite write serialisation ────────────────────────────
+# aiosqlite wraps each connection in its own thread, which means
+# SQLite's internal busy_timeout is not reliably honoured across
+# concurrent asyncio tasks.  This lock serialises write-heavy
+# transactions so only one proceeds at a time.  On PostgreSQL the
+# context manager is a no-op passthrough.
+# ponytail: global asyncio.Lock caps write throughput to 1 concurrent
+# writer — fine for dev SQLite; upgrade path is PostgreSQL.
+_sqlite_write_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def sqlite_serialize_writes():
+    """Acquire the SQLite write lock if the active engine is SQLite.
+
+    Usage::
+
+        async with sqlite_serialize_writes():
+            async with AsyncSessionLocal() as session:
+                ...
+                await session.commit()
+
+    On PostgreSQL this yields immediately without locking.
+    """
+    if use_sqlite_fallback:
+        async with _sqlite_write_lock:
+            yield
+    else:
+        yield
+
 
 
 async def init_db() -> None:
