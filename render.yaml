@@ -1,0 +1,132 @@
+# ── Render.com Blueprint (Aiven PostgreSQL + Neo4j Aura) ─
+# Deploys frontend + backend on Render. Database on Aiven Cloud,
+# knowledge graph on Neo4j Aura — both free tier, no expiry.
+#
+# Usage:
+#   1. Push this file to your repo
+#   2. Go to https://dashboard.render.com → "New" → "Blueprint"
+#   3. Connect your GitHub repo — Render reads this file
+#   4. Fill in the prompted secrets (DATABASE_URL, API keys, etc.)
+#   5. Click "Apply"
+#
+# database.py normalises postgresql:// → postgresql+asyncpg://
+# automatically, so paste the Aiven URI as-is.
+# ─────────────────────────────────────────────────────────
+
+services:
+  # ── Backend (FastAPI + Agents) ─────────────────────────
+  - type: web
+    name: sift-backend
+    runtime: python
+    plan: free
+    rootDir: .
+    buildCommand: |
+      pip install -r backend/requirements.txt -r agents/requirements.txt
+    startCommand: |
+      alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      # ── Core ───────────────────────────────────────────
+      - key: ENVIRONMENT
+        value: prod
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
+      # ── Database (Aiven PostgreSQL) ────────────────────
+      - key: DATABASE_URL
+        sync: false           # paste Aiven Service URI
+
+      # ── Neo4j Knowledge Graph (Aura free tier) ────────
+      - key: NEO4J_URI
+        sync: false           # e.g. neo4j+s://xxxxx.databases.neo4j.io
+      - key: NEO4J_USER
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+
+      # ── LLM ────────────────────────────────────────────
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: gemini-2.5-flash
+      - key: LLM_TEMPERATURE
+        value: "0.2"
+      - key: LLM_TIMEOUT_SECONDS
+        value: "60"
+
+      # ── GitHub (deploy, code_diff, repo_intelligence) ──
+      - key: GITHUB_TOKEN
+        sync: false           # fine-grained PAT with repo read access
+      - key: GITHUB_API_BASE_URL
+        value: https://api.github.com
+
+      # ── Swappable Component Backends ───────────────────
+      - key: KG_BACKEND
+        value: neo4j
+      - key: OBSERVABILITY_BACKEND
+        value: mock
+      - key: DEPLOY_BACKEND
+        value: github
+      - key: INCIDENT_KNOWLEDGE_BACKEND
+        value: db
+      - key: CODE_DIFF_BACKEND
+        value: github
+      - key: REPO_INTELLIGENCE_BACKEND
+        value: github
+      - key: LLM_PROVIDER
+        value: google
+      - key: NOTIFICATION_BACKEND
+        value: console
+      - key: TICKET_BACKEND
+        value: noop
+
+      # ── Orchestrator ───────────────────────────────────
+      - key: CONFIDENCE_THRESHOLD
+        value: "0.6"
+      - key: TOOL_TIMEOUT_SECONDS
+        value: "90"
+      - key: TRACING_ENABLED
+        value: "true"
+
+      # ── KG Bootstrap (real GitHub repo) ────────────────
+      - key: KG_BOOTSTRAP_ENABLED
+        value: "true"
+      - key: KG_BOOTSTRAP_SOURCE
+        value: github_repo
+      - key: KG_BOOTSTRAP_REPO
+        value: Rohith-BG/automated-incident-triage-ai-system
+      - key: KG_BOOTSTRAP_ARCHITECTURE
+        value: monolith
+      - key: KG_BOOTSTRAP_OWNER_TEAM
+        value: platform-team
+      - key: KG_IN_MEMORY_START_EMPTY
+        value: "true"
+
+      # ── CORS: allow the frontend static site ──────────
+      # Update after first deploy with real frontend URL
+      - key: CORS_ORIGINS
+        value: '["https://sift-frontend.onrender.com"]'
+
+  # ── Frontend (Vite/React static site) ──────────────────
+  - type: web
+    name: sift-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Update after first deploy with real backend URL
+      - key: VITE_API_URL
+        value: https://sift-backend.onrender.com
