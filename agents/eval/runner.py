@@ -61,7 +61,7 @@ async def run_evaluation(
         pred_affected = report.affected_services if report else []
         pred_blast = state.blast_radius
         conf_score = report.confidence_score if report else 0.0
-        evidence_summary = report.evidence_summary if report else ""
+        evidence_summary = report.observability_analysis if report else ""
 
         # Accuracy metrics
         res = evaluate_incident_result(
@@ -81,7 +81,7 @@ async def run_evaluation(
             "code_evidence": state.code_evidence,
         }
         res["faithfulness_score"] = compute_faithfulness_score(
-            evidence_summary=evidence_summary,
+            observability_analysis=evidence_summary,
             collected_evidence=all_evidence,
         )
 
