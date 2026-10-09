@@ -633,6 +633,29 @@ async def build_mutations_node(
                 )
             )
 
+        # Service-level dependency edges (inter-service).
+        for dep in facts.get("dependencies", []):
+            if dep.get("kind") not in (
+                "internal_service", "external",
+            ):
+                continue
+            target = dep.get("to", "")
+            if not target or target == service_id:
+                continue
+            edge_key = (service_id, target)
+            if edge_key in seen_mod_edges:
+                continue
+            seen_mod_edges.add(edge_key)
+            mutations.append(
+                build_add_dependency_mutation(
+                    from_id=service_id,
+                    to_id=target,
+                    evidence=dep.get(
+                        "evidence", f"{repo}:dependency"
+                    ),
+                )
+            )
+
     return {"mutations": mutations}
 
 
