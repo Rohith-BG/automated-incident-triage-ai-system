@@ -142,17 +142,20 @@ async def test_attach_alert(
 async def test_save_report(
     repo: IncidentRepository, session: AsyncSession
 ) -> None:
-    """save_report() persists a root-cause report with uncertainty and model_used."""
+    """save_report() persists a root-cause report with structured evidence fields."""
     incident = await repo.create("cart-service")
     report = await repo.save_report(
         incident_id=incident.id,
         root_cause="Redis crashed",
-        evidence_summary="ECONNREFUSED in logs",
         affected_services=["cart-service", "checkout-service"],
+        raw_logs={"cart-service": {"errors": "ECONNREFUSED"}},
+        raw_metrics={},
+        observability_analysis="ECONNREFUSED in logs",
+        code_diffs={},
+        past_resolutions=[],
         remediation_steps=["Restart Redis"],
         confidence_score=0.92,
         uncertainty="No deploy logs available",
-        model_used="gemini-2.5-flash",
     )
     await session.commit()
 
@@ -164,7 +167,7 @@ async def test_save_report(
         "checkout-service",
     ]
     assert report.uncertainty == "No deploy logs available"
-    assert report.model_used == "gemini-2.5-flash"
+    assert report.observability_analysis == "ECONNREFUSED in logs"
 
 
 @pytest.mark.asyncio

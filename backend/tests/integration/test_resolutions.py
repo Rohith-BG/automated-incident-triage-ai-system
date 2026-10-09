@@ -60,7 +60,7 @@ async def get_token_and_user_for_role(email: str, role: UserRole) -> tuple[str, 
 @pytest.mark.asyncio
 async def test_resolve_incident_route() -> None:
     """POST /incidents/{incident_id}/resolution resolves an incident and sets status."""
-    token, user = await get_token_and_user_for_role("sre@triage.ai", UserRole.SRE)
+    token, user = await get_token_and_user_for_role("developer@triage.ai", UserRole.DEVELOPER)
 
     # 1. Create a dummy incident in database
     async with AsyncSessionLocal() as session:

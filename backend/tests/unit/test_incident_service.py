@@ -141,24 +141,30 @@ async def test_complete_investigation(
     """complete_investigation() saves report and updates status."""
     report = MagicMock()
     report.root_cause = "Redis crashed"
-    report.evidence_summary = "ECONNREFUSED"
     report.affected_services = ["cart-service"]
+    report.raw_logs = {"cart-service": {"errors": "ECONNREFUSED"}}
+    report.raw_metrics = {}
+    report.observability_analysis = "ECONNREFUSED"
+    report.code_diffs = {}
+    report.past_resolutions = []
     report.remediation_steps = ["Restart Redis"]
     report.confidence_score = 0.92
     report.uncertainty = "None identified"
-    report.model_used = "gemini-2.5-flash"
 
     await service.complete_investigation("inc-1", report)
 
     mock_repo.save_report.assert_called_once_with(
         incident_id="inc-1",
         root_cause="Redis crashed",
-        evidence_summary="ECONNREFUSED",
         affected_services=["cart-service"],
+        raw_logs={"cart-service": {"errors": "ECONNREFUSED"}},
+        raw_metrics={},
+        observability_analysis="ECONNREFUSED",
+        code_diffs={},
+        past_resolutions=[],
         remediation_steps=["Restart Redis"],
         confidence_score=0.92,
         uncertainty="None identified",
-        model_used="gemini-2.5-flash",
     )
     mock_repo.update_status.assert_called_once_with(
         "inc-1", IncidentStatus.COMPLETED

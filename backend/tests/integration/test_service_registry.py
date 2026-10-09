@@ -24,21 +24,18 @@ async def clean_database():
 
 
 async def get_token_for_role(email: str, role: UserRole) -> str:
-    """Register, promote in DB, login, and return access token."""
-    client.post(
-        "/auth/register",
-        json={
-            "email": email,
-            "password": "password123",
-            "full_name": f"{role.value.capitalize()} User",
-        },
-    )
+    """Insert user directly in DB, login, and return access token."""
+    from backend.app.core.security import hash_password
+    from backend.app.repositories.user import UserRepository
 
     async with AsyncSessionLocal() as session:
-        from sqlalchemy import select
-        res = await session.execute(select(User).where(User.email == email))
-        user = res.scalar_one()
-        user.role = role.value
+        repo = UserRepository(session=session)
+        await repo.create(
+            email=email,
+            hashed_password=hash_password("password123"),
+            full_name=f"{role.value.capitalize()} User",
+            role=role,
+        )
         await session.commit()
 
     login_resp = client.post(
@@ -87,3 +84,17 @@ async def test_service_registry_endpoints() -> None:
     # Deactivate service
     del_resp = client.delete("/service-registry/test-service", headers=admin_headers)
     assert del_resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_sync_services_from_kg_endpoint() -> None:
+    """Test POST /service-registry/sync-from-kg admin endpoint."""
+    admin_token = await get_token_for_role("admin-sync@triage.ai", UserRole.ADMIN)
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    resp = client.post("/service-registry/sync-from-kg", headers=admin_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "synced" in data
+    assert isinstance(data["synced"], int)
+

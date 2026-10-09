@@ -34,22 +34,18 @@ async def clean_database():
 
 
 async def get_token_for_role(email: str, role: UserRole) -> str:
-    """Register, promote in DB, login, and return access token."""
-    client.post(
-        "/auth/register",
-        json={
-            "email": email,
-            "password": "password123",
-            "full_name": f"{role.value.capitalize()} User",
-        },
-    )
+    """Insert user directly in DB, login, and return access token."""
+    from backend.app.core.security import hash_password
+    from backend.app.repositories.user import UserRepository
 
     async with AsyncSessionLocal() as session:
-        from sqlalchemy import select
-
-        res = await session.execute(select(User).where(User.email == email))
-        user = res.scalar_one()
-        user.role = role.value
+        repo = UserRepository(session=session)
+        await repo.create(
+            email=email,
+            hashed_password=hash_password("password123"),
+            full_name=f"{role.value.capitalize()} User",
+            role=role,
+        )
         await session.commit()
 
     login_resp = client.post(
@@ -176,10 +172,10 @@ async def test_feedback_and_approval_flow() -> None:
 
 
 @pytest.mark.asyncio
-async def test_team_member_cannot_approve_bootstrap() -> None:
+async def test_developer_cannot_approve_bootstrap() -> None:
     """RBAC: only admins may approve or trigger the bootstrap flow."""
-    team_member_token = await get_token_for_role("member@triage.ai", UserRole.TEAM_MEMBER)
-    member_headers = {"Authorization": f"Bearer {team_member_token}"}
+    developer_token = await get_token_for_role("member@triage.ai", UserRole.DEVELOPER)
+    member_headers = {"Authorization": f"Bearer {developer_token}"}
 
     # Non-admin cannot trigger the build
     resp = client.post(
@@ -209,8 +205,8 @@ async def test_team_member_cannot_approve_bootstrap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reject_proposal_leaves_staging() -> None:
-    """Rejecting a bootstrap proposal does not touch the active graph."""
+async def test_reject_proposal_clears_staging() -> None:
+    """Rejecting a bootstrap proposal clears the staged graph."""
     admin_token = await get_token_for_role("admin@triage.ai", UserRole.ADMIN)
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -219,6 +215,11 @@ async def test_reject_proposal_leaves_staging() -> None:
         json={"source": "services_json"},
         headers=admin_headers,
     )
+
+    # Staging should have content after a build.
+    staging = client.get("/kg-bootstrap/staging", headers=admin_headers).json()
+    assert len(staging["nodes"]) > 0, "staging should have content before reject"
+
     proposals = client.get("/kg-proposals", headers=admin_headers).json()
     bootstrap = next(
         p for p in proposals if p["component_id"] == "kg-bootstrap"
@@ -231,3 +232,8 @@ async def test_reject_proposal_leaves_staging() -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "rejected"
+
+    # After rejection, staging must be empty.
+    staging = client.get("/kg-bootstrap/staging", headers=admin_headers).json()
+    assert len(staging["nodes"]) == 0, "staging should be cleared after reject"
+    assert len(staging["edges"]) == 0, "staging edges should be cleared after reject"

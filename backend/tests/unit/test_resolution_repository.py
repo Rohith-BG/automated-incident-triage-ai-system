@@ -48,7 +48,7 @@ async def test_create_and_get_resolution(
         email="engineer@triage.ai",
         hashed_password="hash",
         full_name="Resolving Engineer",
-        role="sre",
+        role="developer",
     )
     session.add(user)
 

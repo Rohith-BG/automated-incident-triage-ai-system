@@ -51,8 +51,12 @@ def _make_report(
     rpt = MagicMock()
     rpt.id = report_id
     rpt.root_cause = "Redis crashed"
-    rpt.evidence_summary = "ECONNREFUSED in logs"
     rpt.affected_services = ["cart-service"]
+    rpt.raw_logs = {"cart-service": {"errors": "ECONNREFUSED"}}
+    rpt.raw_metrics = {}
+    rpt.observability_analysis = "ECONNREFUSED in logs"
+    rpt.code_diffs = {}
+    rpt.past_resolutions = []
     rpt.remediation_steps = ["Restart Redis"]
     rpt.confidence_score = confidence
     rpt.created_at = datetime(2026, 7, 13, 10, 5, 0)

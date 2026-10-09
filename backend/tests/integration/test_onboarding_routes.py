@@ -90,7 +90,7 @@ async def test_discover_topology_endpoint() -> None:
 async def test_onboarding_status_endpoint() -> None:
     """GET /onboarding/status returns onboarding platform status."""
     # Any authenticated user can view status
-    user_token = await get_token_for_role("user@triage.ai", UserRole.TEAM_MEMBER)
+    user_token = await get_token_for_role("user@triage.ai", UserRole.DEVELOPER)
     headers = {"Authorization": f"Bearer {user_token}"}
 
     response = client.get("/onboarding/status", headers=headers)

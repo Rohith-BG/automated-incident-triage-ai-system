@@ -53,7 +53,7 @@ async def test_create_user(
         email="test@example.com",
         hashed_password="some-hashed-password",
         full_name="John Doe",
-        role=UserRole.TEAM_MEMBER,
+        role=UserRole.DEVELOPER,
     )
     await session.commit()
 
@@ -61,7 +61,7 @@ async def test_create_user(
     assert user.email == "test@example.com"
     assert user.hashed_password == "some-hashed-password"
     assert user.full_name == "John Doe"
-    assert user.role == UserRole.TEAM_MEMBER
+    assert user.role == UserRole.DEVELOPER
     assert user.is_active is True
 
 
@@ -74,7 +74,7 @@ async def test_get_by_id(
         email="test@example.com",
         hashed_password="hash",
         full_name="John Doe",
-        role=UserRole.TEAM_MEMBER,
+        role=UserRole.DEVELOPER,
     )
     await session.commit()
 
@@ -102,7 +102,7 @@ async def test_get_by_email(
         email="test@example.com",
         hashed_password="hash",
         full_name="John Doe",
-        role=UserRole.TEAM_MEMBER,
+        role=UserRole.DEVELOPER,
     )
     await session.commit()
 
