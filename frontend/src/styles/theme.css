@@ -1,0 +1,837 @@
+@import 'tailwindcss';
+
+@import '@fontsource-variable/archivo/wdth.css';
+@import '@fontsource-variable/martian-mono/wdth.css';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   THE CHROMATOGRAM — Sift's visual system.
+
+   An alert is an unresolved mixture. Every surface in this system is an
+   analytical readout: cool chart stock under a hairline grid, near-black
+   plotter ink, one plotter red reserved for the identified component and the
+   primary action, amber for anything below the instrument's threshold.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Chart stock — the ground. Cool, faintly green; never cream. */
+  --color-stock: #f2f4f1;
+  --color-stock-2: #e9ede8;
+  --color-stock-3: #dfe5de;
+
+  /* Ruled grid — the only ambient colour on the page. */
+  --color-grid-minor: #d3ded4;
+  --color-grid-major: #b4c6b7;
+
+  /* Plotter ink. Tinted from the ground's hue, never neutral grey. */
+  --color-ink: #171a17;
+  --color-ink-2: #414a42;
+  --color-ink-3: #5e685f;
+
+  /* The one saturated ink. Identified component; primary action. Nothing else. */
+  --color-signal: #d2231f;
+  --color-signal-lit: #ff5347;
+
+  /* Below the detection limit. Tentative, unresolved, failed. */
+  --color-tentative: #96560a;
+  --color-tentative-lit: #e8a33c;
+
+  /* Instrument chassis — the dark passage. Ink-green-black, not neutral. */
+  --color-chassis: #1b211c;
+  --color-chassis-2: #232b24;
+  --color-chassis-3: #2f382f;
+  --color-phosphor: #e8ede6;
+  --color-phosphor-2: #93a094;
+
+  --font-display: 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-data: 'Martian Mono Variable', ui-monospace, monospace;
+
+  --text-legend: 0.6875rem;
+  --text-legend--line-height: 1.2;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-stock);
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ── Browser surfaces. The parts not drawn still carry the design. ── */
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-signal) 22%, transparent);
+    color: var(--color-ink);
+  }
+
+  :where(.on-chassis) ::selection {
+    background-color: color-mix(in srgb, var(--color-signal-lit) 30%, transparent);
+    color: var(--color-phosphor);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-signal);
+    outline-offset: 3px;
+    border-radius: 1px;
+  }
+
+  .on-chassis :focus-visible {
+    outline-color: var(--color-signal-lit);
+  }
+
+  input,
+  textarea {
+    caret-color: var(--color-signal);
+  }
+
+  a {
+    color: inherit;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.22em;
+  }
+
+  /* Ruled scrollbar — a chart margin, not a browser default. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-grid-major) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-stock-2);
+    border-left: 1px solid var(--color-grid-minor);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-grid-major);
+    border: 3px solid var(--color-stock-2);
+    border-radius: 0;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-3);
+  }
+
+  .on-chassis ::-webkit-scrollbar-track {
+    background: var(--color-chassis-2);
+    border-left-color: var(--color-chassis-3);
+  }
+
+  .on-chassis ::-webkit-scrollbar-thumb {
+    background: var(--color-chassis-3);
+    border-color: var(--color-chassis-2);
+  }
+}
+
+/* ─────────────────────────── Type registers ─────────────────────────── */
+
+/* Legend: tracked narrow caps. An axis label pinned to apparatus — never an
+   eyebrow floated above a heading. */
+.legend {
+  font-family: var(--font-display);
+  font-stretch: 66%;
+  font-weight: 650;
+  font-size: var(--text-legend);
+  line-height: 1.2;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+/* Every quantity on this page is set in the instrument's own printing. */
+.data {
+  font-family: var(--font-data);
+  font-stretch: 78%;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.data-tight {
+  font-family: var(--font-data);
+  font-stretch: 75%;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  letter-spacing: -0.02em;
+}
+
+/* The verdict register: Archivo pushed out to its width ceiling. */
+.verdict-type {
+  font-family: var(--font-display);
+  font-stretch: 118%;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 0.94;
+  text-wrap: balance;
+}
+
+.section-type {
+  font-family: var(--font-display);
+  font-stretch: 104%;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+  line-height: 1.04;
+  text-wrap: balance;
+}
+
+.prose-measure {
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+
+/* ─────────────────────────── Materials ─────────────────────────── */
+
+/* Ruled analytical grid: minor divisions every 8px, major every 48px. */
+.chart-grid {
+  background-image:
+    linear-gradient(to right, var(--color-grid-major) 0 1px, transparent 1px 100%),
+    linear-gradient(to bottom, var(--color-grid-major) 0 1px, transparent 1px 100%),
+    linear-gradient(to right, var(--color-grid-minor) 0 1px, transparent 1px 100%),
+    linear-gradient(to bottom, var(--color-grid-minor) 0 1px, transparent 1px 100%);
+  background-size:
+    48px 48px,
+    48px 48px,
+    8px 8px,
+    8px 8px;
+  background-position: 0 0;
+}
+
+.chart-grid-chassis {
+  background-image:
+    linear-gradient(to right, #33403400 0 1px, transparent 1px 100%),
+    linear-gradient(to bottom, var(--color-chassis-3) 0 1px, transparent 1px 100%),
+    linear-gradient(to right, #2a332b 0 1px, transparent 1px 100%),
+    linear-gradient(to bottom, #2a332b 0 1px, transparent 1px 100%);
+  background-size:
+    48px 48px,
+    48px 48px,
+    8px 8px,
+    8px 8px;
+}
+
+/* Hatch carries a numeric weight: the sparser the hatch, the weaker the
+   evidence behind the region. */
+.hatch-1 {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-grid-major) 0 1px,
+    transparent 1px 11px
+  );
+}
+
+.hatch-2 {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-grid-major) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+.hatch-tentative {
+  background-image: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-tentative) 42%, transparent) 0 1px,
+    transparent 1px 7px
+  );
+}
+
+/* Two hatches crossing at ninety degrees: the sources disagree. */
+.hatch-conflict {
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--color-tentative) 46%, transparent) 0 1px,
+      transparent 1px 7px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--color-tentative) 46%, transparent) 0 1px,
+      transparent 1px 7px
+    );
+}
+
+/* The instrument's threshold. Anything under it is reported, never hidden. */
+.detection-rule {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--color-ink-2) 0 6px,
+    transparent 6px 12px
+  );
+  height: 1px;
+}
+
+/* Every retrieved artifact wears its provenance. Retrieved evidence is
+   untrusted content; where it came from is part of the object. */
+.provenance {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  border: 1px solid var(--color-grid-major);
+  padding: 0.2em 0.5em;
+  font-family: var(--font-data);
+  font-stretch: 75%;
+  font-size: 0.625rem;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-3);
+  background-color: color-mix(in srgb, var(--color-stock) 70%, transparent);
+}
+
+.provenance-chassis {
+  border-color: var(--color-chassis-3);
+  color: var(--color-phosphor-2);
+  background-color: color-mix(in srgb, var(--color-chassis) 70%, transparent);
+}
+
+/* ─────────────────────────── Hero fit ───────────────────────────
+   The instrument has to be inside the first viewport, not below it. On short
+   viewports the identification block gives back the height the plot needs.
+   ──────────────────────────────────────────────────────────────── */
+
+.hero-pad {
+  padding-top: 2.25rem;
+  padding-bottom: 1.25rem;
+}
+
+/* Accepted hero plate (live): the identification block participates in the
+   page's flat stock register instead of the ruled chart paper, matching the
+   sections below it. Full-bleed, stock ground. */
+.hero-pad {
+  max-width: none;
+  background-color: var(--color-stock);
+}
+
+.hero-title {
+  font-size: clamp(2.1rem, 5vw, 3.9rem);
+}
+
+.hero-lede {
+  margin-top: 1rem;
+  max-width: none;
+  width: 100%;
+  text-align: justify;
+  hyphens: auto;
+  font-size: 1.35rem;
+  line-height: 1.6;
+}
+
+.hero-actions {
+  margin-top: 1.5rem;
+}
+
+@media (max-height: 880px) {
+  .hero-pad {
+    padding-top: 1.15rem;
+    padding-bottom: 0.65rem;
+  }
+
+  .hero-title {
+    font-size: clamp(1.8rem, 3.6vw, 2.9rem);
+  }
+
+  .hero-lede {
+    margin-top: 0.7rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+
+.hero-lede .pivot {
+  font-weight: 610;
+}
+
+.hero-actions {
+    margin-top: 1.05rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-lede {
+    font-size: 1rem;
+  }
+}
+
+/* ─────────────────────────── Motion ─────────────────────────── */
+
+/* The one authored moment: the pen plots the trace. Channels that run in
+   parallel in the pipeline draw simultaneously here, because they do. */
+.plot-draw {
+  stroke-dasharray: var(--plot-len);
+  stroke-dashoffset: var(--plot-len);
+  animation: plot 1500ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: var(--plot-delay, 0ms);
+}
+
+@keyframes plot {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.pen-settle {
+  animation: pen-settle 640ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--plot-delay, 0ms);
+}
+
+@keyframes pen-settle {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plot-draw {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+
+  .pen-settle {
+    animation: none;
+  }
+}
+
+/* ─── Login entrance: the instrument initializes ─── */
+
+/* Grid draws in from the centre — the ruled surface materializing. */
+.grid-init {
+  -webkit-mask-image: radial-gradient(circle, #000 0%, transparent 0%);
+  mask-image: radial-gradient(circle, #000 0%, transparent 0%);
+  animation: grid-reveal 900ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes grid-reveal {
+  to {
+    -webkit-mask-image: radial-gradient(circle, #000 0%, transparent 72%);
+    mask-image: radial-gradient(circle, #000 0%, transparent 72%);
+  }
+}
+
+/* Staggered entrance: wordmark first, card settles after. */
+.wordmark-enter {
+  animation: wordmark-fade 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes wordmark-fade {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.card-enter {
+  animation: card-slide 500ms cubic-bezier(0.16, 1, 0.3, 1) 160ms both;
+}
+
+@keyframes card-slide {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Sub-text arrives last — the footer note. */
+.footer-enter {
+  animation: footer-fade 400ms cubic-bezier(0.16, 1, 0.3, 1) 400ms both;
+}
+
+@keyframes footer-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Button press: the physical click — scale down, no shadow. */
+.login-btn:active {
+  transform: scale(0.975);
+  box-shadow: none;
+  transition-duration: 60ms;
+}
+
+/* Input focus: the ruled field gains the instrument's active tint. */
+.login-input:focus {
+  border-color: var(--color-ink);
+  box-shadow: 0 0 0 1px var(--color-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid-init {
+    animation: none;
+    -webkit-mask-image: radial-gradient(circle, #000 0%, transparent 72%);
+    mask-image: radial-gradient(circle, #000 0%, transparent 72%);
+  }
+
+  .wordmark-enter,
+  .card-enter,
+  .footer-enter {
+    animation: none;
+  }
+}
+
+/* ─── Profile menu: the plate settles out of the corner ─── */
+
+.profile-menu-enter {
+  transform-origin: top right;
+  animation: menu-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-menu-enter {
+    animation: none;
+  }
+}
+
+/* ─── Dashboard entrance: sections settle in sequence ─── */
+
+.dash-enter {
+  animation: dash-rise 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--dash-delay, 0ms);
+}
+
+@keyframes dash-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-enter {
+    animation: none;
+  }
+}
+
+/* Per-card arrival: the quarter board settles card by card, not as one block. */
+.dash-card {
+  animation: dash-card-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes dash-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-card {
+    animation: none;
+  }
+}
+
+/* ─────────────────────────── Controls ─────────────────────────── */
+
+.specimen-tab {
+  font-family: var(--font-data);
+  font-stretch: 75%;
+  font-size: 0.6875rem;
+  letter-spacing: -0.01em;
+  border: 1px solid var(--color-chassis-3);
+  color: var(--color-phosphor-2);
+  background-color: transparent;
+  padding: 0.5rem 0.5rem;
+  cursor: pointer;
+  transition:
+    background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.specimen-tab:hover {
+  border-color: var(--color-phosphor-2);
+  color: var(--color-phosphor);
+  background-color: var(--color-chassis-2);
+}
+
+.specimen-tab[aria-selected='true'] {
+  border-color: var(--color-signal-lit);
+  color: var(--color-chassis);
+  background-color: var(--color-signal-lit);
+  font-weight: 600;
+}
+
+.specimen-tab-stock {
+  font-family: var(--font-data);
+  font-stretch: 75%;
+  font-size: 0.6875rem;
+  letter-spacing: -0.01em;
+  border: 1px solid var(--color-grid-minor);
+  color: var(--color-ink-2);
+  background-color: var(--color-stock);
+  padding: 0.5rem 0.5rem;
+  cursor: pointer;
+  transition:
+    background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.specimen-tab-stock:hover {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+  background-color: var(--color-stock-2);
+}
+
+.specimen-tab-stock[aria-selected='true'] {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+  background-color: var(--color-stock-2);
+  font-weight: 600;
+}
+
+.action-primary-stock {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: var(--color-stock);
+  color: var(--color-ink);
+  border: 1px solid var(--color-grid-major);
+  padding: 0.8rem 1.15rem;
+  font-family: var(--font-display);
+  font-stretch: 88%;
+  font-weight: 700;
+  font-size: 0.875rem;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  transition:
+    border-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.action-primary-stock:hover {
+  border-color: var(--color-ink);
+  background-color: var(--color-stock-2);
+  transform: translateY(-1px);
+}
+
+.action-primary-stock:disabled {
+  cursor: default;
+  opacity: 0.45;
+  transform: none;
+}
+
+.action-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: var(--color-signal);
+  color: #fff;
+  border: 1px solid var(--color-signal);
+  padding: 0.8rem 1.15rem;
+  font-family: var(--font-display);
+  font-stretch: 88%;
+  font-weight: 700;
+  font-size: 0.875rem;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  transition:
+    background-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.action-primary:hover {
+  background-color: #b81c19;
+  box-shadow: 0 3px 14px -4px color-mix(in srgb, var(--color-signal) 65%, transparent);
+  transform: translateY(-1px);
+}
+
+.action-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--color-chassis-3);
+  color: var(--color-phosphor);
+  padding: 0.8rem 1.15rem;
+  font-family: var(--font-display);
+  font-stretch: 88%;
+  font-weight: 650;
+  font-size: 0.875rem;
+  text-decoration: none;
+  transition:
+    border-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.action-secondary:hover {
+  border-color: var(--color-phosphor-2);
+  background-color: var(--color-chassis-2);
+}
+
+.action-secondary-stock {
+  border-color: var(--color-grid-major);
+  color: var(--color-ink);
+}
+
+.action-secondary-stock:hover {
+  border-color: var(--color-ink);
+  background-color: var(--color-stock-2);
+}
+
+/* ─── User management: modal and table ─── */
+
+/* Bolder table header: the column legend reads as a label with more weight
+   than the section-type names beneath it. */
+.table-head-legend {
+  font-family: var(--font-display);
+  font-stretch: 66%;
+  font-weight: 760;
+  font-size: var(--text-legend);
+  line-height: 1.2;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.modal-enter {
+  animation: modal-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.modal-backdrop {
+  animation: backdrop-fade 200ms ease-out both;
+}
+
+@keyframes backdrop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.user-row {
+  animation: user-row-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes user-row-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-enter,
+  .modal-backdrop,
+  .user-row {
+    animation: none;
+  }
+}
+
+/* ── Login page: shake on validation failure ── */
+
+.login-shake {
+  animation: shake-x 0.4s ease-out;
+}
+
+@keyframes shake-x {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+/* ── Inline error message entrance ── */
+
+.login-error-enter {
+  animation: error-slide-in 0.25s ease-out both;
+}
+
+@keyframes error-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-shake,
+  .login-error-enter {
+    animation: none;
+  }
+}
