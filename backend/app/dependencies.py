@@ -68,6 +68,27 @@ def get_incident_controller(
     return IncidentController(service=service)
 
 
+# ── Dashboard domain ────────────────────────────────────
+
+
+def get_dashboard_service(
+    incident_repo: IncidentRepository = Depends(get_incident_repository),
+) -> "DashboardService":
+    """Provide a DashboardService with its incident repository."""
+    from .services.dashboard import DashboardService
+
+    return DashboardService(incident_repository=incident_repo)
+
+
+def get_dashboard_controller(
+    service: "DashboardService" = Depends(get_dashboard_service),
+) -> "DashboardController":
+    """Provide a DashboardController with its service."""
+    from .controllers.dashboard import DashboardController
+
+    return DashboardController(service=service)
+
+
 # ── Incident Knowledge domain ───────────────────────────
 
 
@@ -139,6 +160,9 @@ def get_kg_proposal_repository(
 
 async def get_kg_proposal_service(
     repo: KGChangeProposalRepository = Depends(get_kg_proposal_repository),
+    service_registry_repo: ServiceRegistryRepository = Depends(
+        get_service_registry_repository
+    ),
 ) -> AsyncIterator[KGProposalService]:
     """Provide a KGProposalService wired with the active graph store.
 
@@ -160,6 +184,7 @@ async def get_kg_proposal_service(
             proposal_repo=repo,
             kg_store=create_kg_store(config),
             deploy_mcp_client=deploy_client,
+            service_registry_repo=service_registry_repo,
         )
     finally:
         await deploy_client.shutdown()
