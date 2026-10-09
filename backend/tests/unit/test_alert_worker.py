@@ -2,6 +2,8 @@
 
 import json
 
+import json
+
 import pytest
 import pytest_asyncio
 from backend.app.core.database import AsyncSessionLocal, Base, engine

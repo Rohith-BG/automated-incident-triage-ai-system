@@ -63,6 +63,12 @@ class AuthService:
                 f"Email '{email}' is already registered."
             )
 
+        # Bootstrap-admin: the very first account owns the platform and
+        # can open the onboarding / initial-setup flow (build + review KG).
+        # Every later registration is a plain team member.
+        is_first_user = await self._repo.count() == 0
+        role = UserRole.ADMIN if is_first_user else UserRole.TEAM_MEMBER
+
         hashed = hash_password(password)
         user = await self._repo.create(
             email=email,

@@ -124,6 +124,9 @@ class Neo4jGraphStore:
         """
         return []
 
+        async with self._driver.session() as session:
+            return await session.execute_read(_read)
+
     async def get_all_services(self) -> list[str]:
         """Fetch all Service node IDs."""
         async def _read(tx: Any) -> list[str]:
