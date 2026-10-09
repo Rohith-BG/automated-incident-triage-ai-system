@@ -81,3 +81,43 @@ class UserRepository:
         stmt = select(User.id)
         result = await self._session.execute(stmt)
         return len(result.all())
+
+    async def list_all(self) -> list[User]:
+        """Return every user, ordered by creation date descending.
+
+        Returns:
+            List of User instances.
+        """
+        stmt = select(User).order_by(User.created_at.desc())
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def update(
+        self,
+        user: User,
+        *,
+        full_name: str | None = None,
+        role: str | None = None,
+        is_active: bool | None = None,
+    ) -> User:
+        """Apply partial updates to a user row.
+
+        Args:
+            user: The User instance to mutate.
+            full_name: New display name (if provided).
+            role: New RBAC role (if provided).
+            is_active: New active flag (if provided).
+
+        Returns:
+            The updated User.
+        """
+        if full_name is not None:
+            user.full_name = full_name
+        if role is not None:
+            user.role = role
+        if is_active is not None:
+            user.is_active = is_active
+        await self._session.flush()
+        await self._session.refresh(user)
+        logger.info("Updated user %s", user.id)
+        return user
