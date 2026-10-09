@@ -22,6 +22,25 @@ from agents.llm.base import LLMMessage, LLMResponse, LLMToolDef
 
 logger = logging.getLogger(__name__)
 
+def _extract_text_content(content: Any) -> str:
+    """Extract plain text from LangChain AIMessage content.
+
+    LangChain content is either a plain string or a list of
+    content-part dicts (Gemini style):
+    ``[{'type': 'text', 'text': '...'}, ...]``.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and part.get("text"):
+                parts.append(part["text"])
+        return "\n".join(parts) if parts else str(content)
+    return str(content)
+
 
 class LangChainAdapter:
     """LLMAdapter implementation wrapping a LangChain BaseChatModel or Runnable fallback chain."""
@@ -79,7 +98,7 @@ class LangChainAdapter:
         try:
             res: AIMessage = await model.ainvoke(lc_messages)  # type: ignore[assignment]
 
-            content = res.content if isinstance(res.content, str) else str(res.content)
+            content = _extract_text_content(res.content)
             tool_calls = None
             if hasattr(res, "tool_calls") and res.tool_calls:
                 tool_calls = [
