@@ -34,12 +34,12 @@ def test_evaluate_incident_result_scoring() -> None:
 
 
 def test_faithfulness_score_grounded() -> None:
-    """Faithfulness score is high when evidence_summary references collected evidence."""
+    """Faithfulness score is high when observability_analysis references collected evidence."""
     evidence = {
         "log_evidence": {"payment-service": {"errors": "ECONNREFUSED redis-cache"}},
     }
     score = compute_faithfulness_score(
-        evidence_summary="ECONNREFUSED error from redis-cache in payment-service logs",
+        observability_analysis="ECONNREFUSED error from redis-cache in payment-service logs",
         collected_evidence=evidence,
     )
     assert score > 0.3
@@ -48,7 +48,7 @@ def test_faithfulness_score_grounded() -> None:
 def test_faithfulness_score_empty() -> None:
     """Faithfulness score is 0.0 when no evidence is collected."""
     score = compute_faithfulness_score(
-        evidence_summary="Redis crashed due to memory pressure",
+        observability_analysis="Redis crashed due to memory pressure",
         collected_evidence={},
     )
     assert score == 0.0

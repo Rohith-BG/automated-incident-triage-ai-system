@@ -28,8 +28,8 @@ async def test_mcp_client_workflow(client: InProcessMCPClient) -> None:
     # 2. list_tools verifies registration
     tools = client.list_tools()
     # 5 observability, 3 deploy, 4 incident_knowledge, 3 code_diff,
-    # 6 repo_intelligence = 21 tools total
-    assert len(tools) == 21
+    # 7 repo_intelligence = 22 tools total
+    assert len(tools) == 22
 
     # Filtered tool listing
     obs_tools = client.list_tools(server="observability")
@@ -41,7 +41,7 @@ async def test_mcp_client_workflow(client: InProcessMCPClient) -> None:
 
     # Repo intelligence tools registered (KG bootstrap server)
     ri_tools = client.list_tools(server="repo_intelligence")
-    assert len(ri_tools) == 6
+    assert len(ri_tools) == 7
 
     # 3. Call tool on observability server
     logs = await client.call_tool(
