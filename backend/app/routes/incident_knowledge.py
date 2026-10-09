@@ -48,7 +48,7 @@ async def list_knowledge(
     cursor: Optional[str] = Query(None, description="Opaque cursor for pagination"),
     service_id: Optional[str] = Query(None, description="Filter by service ID"),
     controller: IncidentKnowledgeController = Depends(get_incident_knowledge_controller),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SRE, UserRole.TEAM_MEMBER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.DEVELOPER)),
 ) -> IncidentKnowledgeListResponse:
     """Fetch paginated SRE incident knowledge entries."""
     return await controller.list_knowledge(limit=limit, cursor=cursor, service_id=service_id)
@@ -62,7 +62,7 @@ async def list_knowledge(
 async def get_knowledge(
     ik_id: str,
     controller: IncidentKnowledgeController = Depends(get_incident_knowledge_controller),
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.SRE, UserRole.TEAM_MEMBER)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.DEVELOPER)),
 ) -> IncidentKnowledgeResponse:
     """Fetch detail of a single knowledge entry."""
     return await controller.get_knowledge(ik_id=ik_id)

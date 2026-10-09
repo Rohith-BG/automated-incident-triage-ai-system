@@ -10,8 +10,10 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..controllers.incident import IncidentController
+from ..core.database import get_db
 from ..dependencies import get_incident_controller
 from ..schemas.alerts import AlertWebhookPayload, AlertWebhookResponse
 from ..schemas.incidents import IngestAlertRequest
@@ -30,6 +32,7 @@ router = APIRouter(tags=["alerts"])
 async def alert_webhook(
     payload: AlertWebhookPayload,
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
     controller: IncidentController = Depends(
         get_incident_controller
     ),
@@ -51,6 +54,10 @@ async def alert_webhook(
         alert_message=payload.alert_message,
     )
     response = await controller.ingest_alert(request)
+
+    # Commit before dispatching background task (same reason
+    # as ingest_alert — dependency-cleanup commit can race).
+    await db.commit()
 
     if response.is_new:
         background_tasks.add_task(

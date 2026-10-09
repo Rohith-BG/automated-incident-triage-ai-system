@@ -11,14 +11,17 @@ import logging
 from fastapi import APIRouter, Cookie, Depends, Response, status
 
 from ..controllers.auth import AuthController
-from ..dependencies import get_auth_controller, get_current_user
+from ..dependencies import get_auth_controller, get_current_user, require_role
+from ..enums import UserRole
 from ..models.user import User
 from ..schemas.auth import (
     LoginRequest,
     MessageResponse,
     RegisterRequest,
     TokenResponse,
+    UserListResponse,
     UserResponse,
+    UserUpdateRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,23 +64,24 @@ def _clear_refresh_cookie(response: Response) -> None:
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register a new user",
+    summary="Register a new user (admin only)",
 )
 async def register(
     payload: RegisterRequest,
+    _admin: User = Depends(require_role(UserRole.ADMIN)),
     controller: AuthController = Depends(get_auth_controller),
 ) -> UserResponse:
     """Create a new user account.
 
-    The very first registered user becomes the platform admin and
-    unlocks the onboarding / initial-setup flow (build + review KG).
-    Every subsequent registration defaults to ``team_member``.
+    Only authenticated admins may create users. The admin selects
+    the role for each new user via the ``role`` field in the payload.
     """
-    logger.info("Received registration request for email: %s", payload.email)
+    logger.info("Admin %s registering new user: %s", _admin.email, payload.email)
     response = await controller.register(
         email=payload.email,
         password=payload.password,
         full_name=payload.full_name,
+        role=payload.role,
     )
     logger.info("Successfully registered user: %s (id: %s)", response.email, response.id)
     return response
@@ -170,4 +174,52 @@ async def get_me(
         role=current_user.role,
         is_active=current_user.is_active,
         created_at=current_user.created_at,
+    )
+
+
+# ── Admin user management ────────────────────────────────
+
+
+@router.get(
+    "/users",
+    response_model=UserListResponse,
+    summary="List all users (admin only)",
+)
+async def list_users(
+    _admin: User = Depends(require_role(UserRole.ADMIN)),
+    controller: AuthController = Depends(get_auth_controller),
+) -> UserListResponse:
+    """Return every registered user for the admin management table.
+
+    Only authenticated admins may access this endpoint.
+    """
+    logger.info("Admin %s listing all users", _admin.email)
+    return await controller.list_users()
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=UserResponse,
+    summary="Update a user (admin only)",
+)
+async def update_user(
+    user_id: str,
+    payload: UserUpdateRequest,
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+    controller: AuthController = Depends(get_auth_controller),
+) -> UserResponse:
+    """Update a user's name, role, or active status.
+
+    Only authenticated admins may update users. Admins cannot
+    deactivate their own account.
+    """
+    logger.info(
+        "Admin %s updating user %s", admin.email, user_id
+    )
+    return await controller.update_user(
+        user_id=user_id,
+        admin_id=admin.id,
+        full_name=payload.full_name,
+        role=payload.role,
+        is_active=payload.is_active,
     )
