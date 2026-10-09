@@ -208,7 +208,7 @@ async def knowledge_graph_query_node(
     await notify_progress(
         config,
         event_type="kg_started",
-        message="Querying knowledge graph for service topology and owner information...",
+        message="Querying knowledge graph for blast radius and dependency topology...",
     )
 
     kg_store = create_kg_store(agent_settings)
@@ -497,6 +497,43 @@ async def incident_knowledge_code_diff_node(
     }
 
 
+def _parse_llm_json(text: str) -> dict[str, Any]:
+    """Parse JSON from LLM output, tolerating common quirks.
+
+    Tries strict ``json.loads`` first. Falls back to
+    ``ast.literal_eval`` when the LLM returns Python-dict syntax
+    (single quotes, True/False/None instead of true/false/null).
+    Also strips trailing commas before closing braces/brackets.
+    """
+    import ast
+
+    # 1. Strict JSON
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. Strip trailing commas  (e.g.  ,"} or ,"])
+    cleaned = re.sub(r",\s*([}\]])", r"\1", text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Python-dict syntax (single quotes, True/False/None)
+    try:
+        result = ast.literal_eval(cleaned)
+        if isinstance(result, dict):
+            return result
+    except (ValueError, SyntaxError):
+        pass
+
+    # 4. Give up — raise so the caller's except block handles it.
+    raise json.JSONDecodeError(
+        "Could not parse LLM output as JSON", text, 0
+    )
+
+
 async def synthesize_node(
     state: InvestigationState, config: RunnableConfig
 ) -> dict[str, Any]:
@@ -510,6 +547,15 @@ async def synthesize_node(
 
     llm = create_llm_adapter(agent_settings)
 
+    # Extract past resolutions from incident knowledge evidence
+    past_resolutions = state.incident_knowledge_evidence.get(
+        "past_resolutions", []
+    )
+    past_resolutions_json = json.dumps(
+        past_resolutions if past_resolutions else "No past resolutions found.",
+        indent=2,
+    )
+
     user_content = SYNTHESIZER_USER_TEMPLATE.format(
         incident_id=state.incident_id,
         service_id=state.service_id,
@@ -521,8 +567,11 @@ async def synthesize_node(
         log_evidence=json.dumps(state.log_evidence, indent=2),
         metrics_evidence=json.dumps(state.metrics_evidence, indent=2),
         deploy_evidence=json.dumps(state.deploy_evidence, indent=2),
-        incident_knowledge_evidence=json.dumps(state.incident_knowledge_evidence, indent=2),
+        incident_knowledge_evidence=json.dumps(
+            state.incident_knowledge_evidence, indent=2
+        ),
         code_evidence=json.dumps(state.code_evidence, indent=2),
+        past_resolutions=past_resolutions_json,
     )
 
     messages = [
@@ -545,20 +594,41 @@ async def synthesize_node(
                 if match:
                     content = match.group(1)
 
-        report_dict = json.loads(content.strip())
-        report_dict["model_used"] = agent_settings.LLM_MODEL
+        report_dict = _parse_llm_json(content.strip())
+
+        # Inject raw MCP evidence directly — not from LLM output
+        report_dict["raw_logs"] = state.log_evidence
+        report_dict["raw_metrics"] = state.metrics_evidence
+        report_dict["code_diffs"] = state.code_evidence
+        report_dict["past_resolutions"] = (
+            past_resolutions if isinstance(past_resolutions, list) else []
+        )
+
         report = RootCauseReport.model_validate(report_dict)
 
     except Exception as e:
-        logger.error(f"Error parsing LLM response or validating report: {e}. Raw response: {content}")
+        logger.error(
+            f"Error parsing LLM response or validating report: {e}. "
+            f"Raw response: {content}"
+        )
         report = RootCauseReport(
-            root_cause=f"AI synthesis failed to produce structured JSON report. Exception: {str(e)}",
-            evidence_summary="No structured evidence could be parsed from synthesizer.",
+            root_cause=(
+                "AI synthesis failed to produce structured JSON report. "
+                f"Exception: {str(e)}"
+            ),
             affected_services=[state.service_id],
+            raw_logs=state.log_evidence,
+            raw_metrics=state.metrics_evidence,
+            observability_analysis="",
+            code_diffs=state.code_evidence,
+            past_resolutions=(
+                past_resolutions
+                if isinstance(past_resolutions, list)
+                else []
+            ),
             remediation_steps=["Check system logs for LLM parser errors."],
             confidence_score=0.1,
             uncertainty=f"Failed LLM synthesis: {str(e)}",
-            model_used=agent_settings.LLM_MODEL,
         )
 
     await notify_progress(
@@ -569,6 +639,7 @@ async def synthesize_node(
     )
 
     return {"report": report}
+
 
 
 async def confidence_gate_node(

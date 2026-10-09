@@ -10,17 +10,41 @@ from pydantic import BaseModel, Field
 
 
 class RootCauseReport(BaseModel):
-    """Structured report produced by the LLM synthesizer."""
+    """Structured report produced by the LLM synthesizer.
 
-    root_cause: str = Field(
-        description="Detailed description of the identified root cause of the incident."
-    )
-    evidence_summary: str = Field(
-        description="Summary of log, trace, metric, deployment, and runbook evidence supporting this finding."
-    )
+    Evidence is stored in discrete sections rather than a single
+    flat string so consumers can render each category independently.
+    """
+
     affected_services: list[str] = Field(
         default_factory=list,
         description="List of service IDs directly or transitively affected by the incident.",
+    )
+    raw_logs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Raw log/trace data per service as fetched from the observability MCP server.",
+    )
+    raw_metrics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Raw metric/anomaly data per service as fetched from the observability MCP server.",
+    )
+    observability_analysis: str = Field(
+        default="",
+        description="LLM-synthesized interpretation of logs, traces, and metrics evidence.",
+    )
+    code_diffs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Commit/diff data per service from the code_diff MCP server.",
+    )
+    past_resolutions: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Matching past resolutions for this incident's service. "
+            "Empty list when no prior resolutions exist."
+        ),
+    )
+    root_cause: str = Field(
+        description="Detailed description of the identified root cause of the incident."
     )
     remediation_steps: list[str] = Field(
         default_factory=list,
@@ -32,10 +56,6 @@ class RootCauseReport(BaseModel):
     uncertainty: str = Field(
         default="",
         description="Known evidence gaps or low-confidence aspects of the investigation.",
-    )
-    model_used: str = Field(
-        default="",
-        description="LLM provider/model that produced this synthesis report.",
     )
 
 
