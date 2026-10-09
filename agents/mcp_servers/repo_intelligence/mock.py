@@ -164,19 +164,64 @@ class MockRepoIntelligenceProvider:
     async def inspect_deep_structure(
         self, repo: str, architecture_type: str
     ) -> dict[str, Any]:
-        """Mock implementation of deep structure discovery."""
+        """Mock implementation of deep structure discovery.
+
+        Returns a realistic multi-level hierarchy: modules, packages
+        (with sub-dirs), files with classes/methods and standalone
+        functions, including cross-package call references.
+        """
         return {
             "repo": repo,
             "modules": ["backend", "agents"],
             "packages": [
                 {
                     "module": "backend",
+                    "name": "controllers",
+                    "path": "backend/app/controllers",
+                    "evidence": f"{repo}:tree/backend/app/controllers",
+                },
+                {
+                    "module": "backend",
                     "name": "services",
                     "path": "backend/app/services",
                     "evidence": f"{repo}:tree/backend/app/services",
-                }
+                },
+                {
+                    "module": "backend",
+                    "name": "repositories",
+                    "path": "backend/app/repositories",
+                    "evidence": f"{repo}:tree/backend/app/repositories",
+                },
+                {
+                    "module": "backend",
+                    "name": "routes",
+                    "path": "backend/app/routes",
+                    "evidence": f"{repo}:tree/backend/app/routes",
+                },
             ],
             "files": [
+                {
+                    "package_id": "backend.controllers",
+                    "file_stem": "incidents",
+                    "file_path": "backend/app/controllers/incidents.py",
+                    "classes": [
+                        {
+                            "name": "IncidentController",
+                            "line_number": 15,
+                            "methods": [
+                                {
+                                    "name": "ingest_alert",
+                                    "is_async": True,
+                                    "line_number": 22,
+                                    "calls": [
+                                        "self._service.create_incident"
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                    "functions": [],
+                },
                 {
                     "package_id": "backend.services",
                     "file_stem": "auth",
@@ -191,12 +236,85 @@ class MockRepoIntelligenceProvider:
                                     "is_async": True,
                                     "line_number": 31,
                                     "calls": ["self._repo.create"],
-                                }
+                                },
+                                {
+                                    "name": "login",
+                                    "is_async": True,
+                                    "line_number": 50,
+                                    "calls": [
+                                        "self._repo.get_by_email"
+                                    ],
+                                },
                             ],
                         }
                     ],
                     "functions": [],
-                }
+                },
+                {
+                    "package_id": "backend.services",
+                    "file_stem": "incident",
+                    "file_path": "backend/app/services/incident.py",
+                    "classes": [
+                        {
+                            "name": "IncidentService",
+                            "line_number": 18,
+                            "methods": [
+                                {
+                                    "name": "create_incident",
+                                    "is_async": True,
+                                    "line_number": 25,
+                                    "calls": [
+                                        "self._repo.create",
+                                        "self._repo.find_active_by_service",
+                                    ],
+                                },
+                            ],
+                        }
+                    ],
+                    "functions": [],
+                },
+                {
+                    "package_id": "backend.repositories",
+                    "file_stem": "incident",
+                    "file_path": "backend/app/repositories/incident.py",
+                    "classes": [
+                        {
+                            "name": "IncidentRepository",
+                            "line_number": 12,
+                            "methods": [
+                                {
+                                    "name": "create",
+                                    "is_async": True,
+                                    "line_number": 18,
+                                    "calls": [],
+                                },
+                                {
+                                    "name": "find_active_by_service",
+                                    "is_async": True,
+                                    "line_number": 30,
+                                    "calls": [],
+                                },
+                            ],
+                        }
+                    ],
+                    "functions": [],
+                },
+                {
+                    "package_id": "backend.routes",
+                    "file_stem": "incidents",
+                    "file_path": "backend/app/routes/incidents.py",
+                    "classes": [],
+                    "functions": [
+                        {
+                            "name": "ingest_alert",
+                            "is_async": True,
+                            "line_number": 20,
+                            "calls": [
+                                "controller.ingest_alert"
+                            ],
+                        },
+                    ],
+                },
             ],
         }
 

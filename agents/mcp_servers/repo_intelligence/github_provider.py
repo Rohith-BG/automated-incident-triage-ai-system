@@ -6,6 +6,7 @@ GitHubClient) and returns deterministic, evidence-carrying facts:
 manifests, imports, and derived dependency edges.
 """
 
+import asyncio
 import logging
 from typing import Any, Optional
 
@@ -143,20 +144,26 @@ class GitHubRepoIntelligenceProvider:
                 ):
                     entry_points.append(path)
 
-        # 2. Import scan over source files (bounded)
-        scanned = 0
+        # 2. Import scan over source files (bounded concurrency)
+        candidate_paths: list[str] = []
         for t in tree:
-            if scanned >= _IMPORT_SCAN_LIMIT:
+            if len(candidate_paths) >= _IMPORT_SCAN_LIMIT:
                 break
             path = t["path"]
             ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
             dot_ext = f".{ext}"
-            if t.get("type") != "blob" or dot_ext not in _IMPORT_EXTENSIONS:
-                continue
-            content = await self._client.get_file_content(repo, path)
+            if t.get("type") == "blob" and dot_ext in _IMPORT_EXTENSIONS:
+                candidate_paths.append(path)
+
+        sem = asyncio.Semaphore(15)
+
+        async def _scan_file(file_path: str) -> list[dict[str, Any]]:
+            async with sem:
+                content = await self._client.get_file_content(repo, file_path)
             if not content:
-                continue
-            scanned += 1
+                return []
+            ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+            dot_ext = f".{ext}"
             language = (
                 "python" if dot_ext == ".py"
                 else "javascript" if dot_ext in (
@@ -164,23 +171,16 @@ class GitHubRepoIntelligenceProvider:
                 )
                 else "go"
             )
-            # Determine which top-level module this source file
-            # belongs to, so we can detect cross-module imports.
-            source_module = path.split("/")[0] if "/" in path else ""
-
-            imports = parse_imports(content, path, language)
+            source_module = file_path.split("/")[0] if "/" in file_path else ""
+            file_deps: list[dict[str, Any]] = []
+            imports = parse_imports(content, file_path, language)
             for imp in imports:
                 module = imp["module"]
                 if not module:
                     continue
-
-                # ── Relative imports (.foo, ..bar) ────────────
                 if module.startswith((".", "/")):
-                    # Monolith: skip relative imports entirely —
-                    # they are intra-package and flood the graph.
-                    # Microservice: still useful as internal edges.
                     if architecture_type != "monolith":
-                        dependencies.append(
+                        file_deps.append(
                             {
                                 "to": module,
                                 "kind": "internal_module",
@@ -188,17 +188,13 @@ class GitHubRepoIntelligenceProvider:
                             }
                         )
                     continue
-
-                # ── Absolute cross-module imports ─────────────
-                # e.g. "from agents.config import X" inside
-                # backend/ → cross_module edge backend→agents.
                 target_root = module.split(".")[0]
                 if (
                     architecture_type == "monolith"
                     and target_root in top_level_dirs
                     and target_root != source_module
                 ):
-                    dependencies.append(
+                    file_deps.append(
                         {
                             "from": source_module,
                             "to": target_root,
@@ -207,16 +203,22 @@ class GitHubRepoIntelligenceProvider:
                         }
                     )
                     continue
-
-                # ── External service heuristic ────────────────
                 if _looks_like_service(module):
-                    dependencies.append(
+                    file_deps.append(
                         {
                             "to": module,
                             "kind": "external_service",
                             "evidence": imp["evidence"],
                         }
                     )
+            return file_deps
+
+        scan_results = await asyncio.gather(
+            *(_scan_file(p) for p in candidate_paths), return_exceptions=True
+        )
+        for res in scan_results:
+            if isinstance(res, list):
+                dependencies.extend(res)
 
         if not manifest_paths:
             notes.append(
@@ -247,10 +249,23 @@ class GitHubRepoIntelligenceProvider:
         modules: list[dict[str, Any]] = []
         if architecture_type == "monolith":
             # Top-level directories are candidates for modules/components.
+            # Skip non-code dirs, consistent with inspect_deep_structure.
+            _ARCH_SKIP = {
+                "data", "tests", "test", ".github", ".vscode",
+                "__pycache__", ".git", "node_modules", ".agents",
+                ".kiro", "alembic", ".venv", ".mypy_cache",
+                ".pytest_cache", ".claude", ".impeccable",
+            }
             seen: set[str] = set()
             for t in tree:
                 parts = t["path"].split("/")
-                if len(parts) >= 2 and parts[0] not in seen and t.get("type") == "blob":
+                if (
+                    len(parts) >= 2
+                    and parts[0] not in seen
+                    and parts[0] not in _ARCH_SKIP
+                    and not parts[0].startswith(".")
+                    and t.get("type") == "blob"
+                ):
                     seen.add(parts[0])
                     modules.append(
                         {
@@ -349,7 +364,7 @@ class GitHubRepoIntelligenceProvider:
             if top not in top_dirs or top in _SKIP_DIRS:
                 continue
             pkg_name = parts[-1]
-            if pkg_name in ("app", "__pycache__"):
+            if pkg_name == "__pycache__":
                 continue
             # Skip the top-level dir itself — it's a module,
             # not a sub-package (avoids backend.backend).
@@ -368,17 +383,13 @@ class GitHubRepoIntelligenceProvider:
                 "evidence": f"{repo}:tree/{d}",
             })
 
-        # Parse Python files in each package.
-        # Only scan files DIRECTLY in the package dir (not in
-        # nested sub-packages). Each file record carries its
-        # classes (with methods) and standalone functions.
-        files: list[dict[str, Any]] = []
-        scanned = 0
+        # Collect candidate files across packages (bounded concurrency).
+        candidate_files: list[tuple[str, str, str]] = []
         for pkg in packages:
             pkg_path = pkg["path"]
             pkg_id = f"{pkg['module']}.{pkg['name']}"
             for t in tree:
-                if scanned >= _IMPORT_SCAN_LIMIT:
+                if len(candidate_files) >= _IMPORT_SCAN_LIMIT:
                     break
                 if (
                     t.get("type") != "blob"
@@ -391,30 +402,43 @@ class GitHubRepoIntelligenceProvider:
                 if "/" in relative:
                     continue
                 # Skip __init__.py and test files.
-                if relative == "__init__.py" or relative.startswith(
-                    "test_"
-                ):
+                if relative == "__init__.py" or relative.startswith("test_"):
                     continue
-                content = await self._client.get_file_content(
-                    repo, t["path"]
-                )
-                if not content:
-                    continue
-                scanned += 1
-                from agents.mcp_servers.repo_intelligence.parsers import (
-                    parse_python_ast,
-                )
-                parsed = parse_python_ast(content, t["path"])
-                # Only include files that have functions or classes.
-                if parsed["classes"] or parsed["functions"]:
-                    file_stem = relative.rsplit(".", 1)[0]
-                    files.append({
-                        "package_id": pkg_id,
-                        "file_stem": file_stem,
-                        "file_path": t["path"],
-                        "classes": parsed["classes"],
-                        "functions": parsed["functions"],
-                    })
+                candidate_files.append((pkg_id, relative, t["path"]))
+
+        sem = asyncio.Semaphore(15)
+
+        async def _fetch_and_parse(
+            item: tuple[str, str, str]
+        ) -> Optional[dict[str, Any]]:
+            pkg_id, relative, file_path = item
+            async with sem:
+                content = await self._client.get_file_content(repo, file_path)
+            if not content:
+                return None
+            from agents.mcp_servers.repo_intelligence.parsers import (
+                parse_python_ast,
+            )
+            parsed = parse_python_ast(content, file_path)
+            if parsed["classes"] or parsed["functions"]:
+                file_stem = relative.rsplit(".", 1)[0]
+                return {
+                    "package_id": pkg_id,
+                    "file_stem": file_stem,
+                    "file_path": file_path,
+                    "classes": parsed["classes"],
+                    "functions": parsed["functions"],
+                }
+            return None
+
+        parse_results = await asyncio.gather(
+            *(_fetch_and_parse(c) for c in candidate_files),
+            return_exceptions=True,
+        )
+        files: list[dict[str, Any]] = [
+            r for r in parse_results
+            if r and not isinstance(r, BaseException)
+        ]
 
         total_fns = sum(
             len(f.get("functions", []))
