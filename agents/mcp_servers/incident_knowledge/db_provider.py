@@ -103,7 +103,7 @@ class DBIncidentKnowledgeProvider:
                 # Simple pattern filtering if pattern is given
                 if error_pattern and inc.report:
                     rc = inc.report.root_cause.lower()
-                    es = inc.report.evidence_summary.lower()
+                    es = inc.report.observability_analysis.lower()
                     if error_pattern.lower() not in rc and error_pattern.lower() not in es:
                         continue
                 results.append(inc.to_dict())

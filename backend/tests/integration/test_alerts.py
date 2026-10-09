@@ -32,8 +32,8 @@ async def mock_llm_adapter():
     mock_response = LLMResponse(
         content="""{
             "root_cause": "Mocked Redis failure.",
-            "evidence_summary": "Errors in cart-service log.",
             "affected_services": ["cart-service"],
+            "observability_analysis": "Errors in cart-service log.",
             "remediation_steps": ["Restart Redis container."],
             "confidence_score": 0.95
         }""",

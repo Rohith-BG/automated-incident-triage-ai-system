@@ -4,19 +4,24 @@ from agents.orchestrator.state import InvestigationState, RootCauseReport
 
 
 def test_root_cause_report_schema() -> None:
-    """Verify RootCauseReport contains uncertainty and model_used fields."""
+    """Verify RootCauseReport contains structured evidence fields."""
     report = RootCauseReport(
         root_cause="Database connection pool exhaustion.",
-        evidence_summary="Log shows ConnectionRefusedError on db-service.",
         affected_services=["payment-service", "db-service"],
+        raw_logs={"payment-service": {"errors": "ConnectionRefusedError"}},
+        raw_metrics={"payment-service": {"metrics": "latency_p99: 5000ms"}},
+        observability_analysis="Log shows ConnectionRefusedError on db-service.",
+        code_diffs={"payment-service": {"recent_commits": []}},
+        past_resolutions=[],
         remediation_steps=["Scale up DB connections"],
         confidence_score=0.92,
         uncertainty="No recent deployment logs found.",
-        model_used="gemini-2.5-flash",
     )
     assert report.confidence_score == 0.92
     assert report.uncertainty == "No recent deployment logs found."
-    assert report.model_used == "gemini-2.5-flash"
+    assert report.observability_analysis == "Log shows ConnectionRefusedError on db-service."
+    assert report.raw_logs == {"payment-service": {"errors": "ConnectionRefusedError"}}
+    assert report.past_resolutions == []
 
 
 def test_investigation_state_schema() -> None:

@@ -90,11 +90,13 @@ class KGProposalService:
         proposal_repo: KGChangeProposalRepository,
         kg_store: Optional[Any] = None,
         deploy_mcp_client: Optional[Any] = None,
+        service_registry_repo: Optional["ServiceRegistryRepository"] = None,
     ) -> None:
         """Initialise with repositories and graph store interfaces."""
         self._proposal_repo = proposal_repo
         self._kg_store = kg_store
         self._deploy_mcp_client = deploy_mcp_client
+        self._service_registry_repo = service_registry_repo
 
     async def create_proposal(
         self,
@@ -157,9 +159,11 @@ class KGProposalService:
                     proposal_id,
                 )
                 await self._kg_store.promote_staging()
+                await self._sync_services_from_kg()
         elif self._kg_store:
             logger.info("Applying %d mutations from proposal %s to KG", len(proposal.proposed_changes), proposal_id)
             await self._kg_store.apply_mutations(proposal.proposed_changes)
+            await self._sync_services_from_kg()
 
         updated = await self._proposal_repo.update_status(
             proposal_id=proposal_id,
@@ -168,13 +172,118 @@ class KGProposalService:
         )
         return updated  # type: ignore[return-value]
 
+    async def sync_services_from_kg(self) -> int:
+        """Public entry point to sync KG services to the registry.
+
+        Returns:
+            Number of services synced.
+        """
+        return await self._sync_services_from_kg()
+
+    async def _sync_services_from_kg(self) -> int:
+        """Read all services from the active KG and upsert into service_registry.
+
+        Only nodes with ``kind == "system"`` or ``"service"`` are synced — code-level
+        nodes (files, classes, functions) are skipped.
+
+        Returns:
+            Number of services synced.
+        """
+        if not self._kg_store or not self._service_registry_repo:
+            logger.warning(
+                "Cannot sync services from KG: "
+                "kg_store=%s, service_registry_repo=%s",
+                bool(self._kg_store),
+                bool(self._service_registry_repo),
+            )
+            return 0
+
+        nodes_to_sync: list[dict[str, Any]] = []
+        if hasattr(self._kg_store, "active_snapshot"):
+            try:
+                snapshot = await self._kg_store.active_snapshot()
+                raw_nodes = snapshot.get("nodes", [])
+                for n in raw_nodes:
+                    sid = n.get("id")
+                    kind = n.get("kind", "service")
+                    if not sid or kind not in ("system", "service"):
+                        continue
+                    props = n.get("properties") or {}
+                    nodes_to_sync.append({"id": sid, **props})
+            except Exception as exc:
+                logger.warning("active_snapshot failed during sync: %s", exc)
+
+        if not nodes_to_sync:
+            try:
+                service_ids = await self._kg_store.get_all_services()
+            except Exception as exc:
+                logger.warning("Failed get_all_services: %s", exc)
+                service_ids = []
+
+            for sid in service_ids:
+                try:
+                    info = await self._kg_store.get_service_info(sid)
+                except (KeyError, Exception) as exc:
+                    logger.warning("Skipping KG service %s: %s", sid, exc)
+                    continue
+
+                if info.get("kind") not in ("system", "service"):
+                    continue
+                nodes_to_sync.append({"id": sid, **info})
+
+        synced = 0
+        for info in nodes_to_sync:
+            sid = info["id"]
+            existing = await self._service_registry_repo.get_by_service_id(sid)
+            if existing:
+                await self._service_registry_repo.update(
+                    sid,
+                    repo=info.get("repo", existing.repo),
+                    owner_team=info.get("owner_team", existing.owner_team),
+                    architecture_type=info.get(
+                        "architecture_type", existing.architecture_type
+                    ),
+                    language=info.get("language", existing.language),
+                    alert_threshold=info.get(
+                        "alert_threshold", existing.alert_threshold
+                    ),
+                    is_active=True,
+                )
+            else:
+                await self._service_registry_repo.create(
+                    service_id=sid,
+                    repo=info.get("repo", ""),
+                    owner_team=info.get("owner_team", "unknown"),
+                    architecture_type=info.get(
+                        "architecture_type", "microservice"
+                    ),
+                    language=info.get("language"),
+                    alert_threshold=info.get("alert_threshold", "medium"),
+                )
+            synced += 1
+
+        logger.info("Synced %d services from KG to service_registry", synced)
+        return synced
+
     async def reject_proposal(
         self, proposal_id: str, reviewer: str, reason: Optional[str] = None
     ) -> KGChangeProposal:
-        """Reject proposal."""
+        """Reject proposal and clean up staged graph for bootstrap proposals."""
         proposal = await self.get_proposal(proposal_id)
         if proposal.status != ProposalStatus.PENDING:
             raise ValueError(f"Cannot reject proposal in state '{proposal.status}'")
+
+        # Bootstrap rejection must clear the staged graph so the
+        # stale nodes and edges do not linger (Rule 26).
+        if (
+            proposal.component_id == KG_BOOTSTRAP_COMPONENT
+            and self._kg_store
+        ):
+            logger.info(
+                "Clearing staged bootstrap graph for rejected proposal %s",
+                proposal_id,
+            )
+            await self._kg_store.staging_clear()
 
         updated = await self._proposal_repo.update_status(
             proposal_id=proposal_id,

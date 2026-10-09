@@ -6,10 +6,12 @@ from fastapi.testclient import TestClient
 from fastapi import APIRouter, Depends
 
 from backend.app.core.database import Base, engine, AsyncSessionLocal
+from backend.app.core.security import hash_password
 from backend.app.enums import UserRole
 from backend.app.main import app
 from backend.app.models.user import User
 from backend.app.dependencies import require_role
+from backend.app.repositories.user import UserRepository
 
 client = TestClient(app)
 
@@ -25,15 +27,42 @@ async def admin_only_route(
     return {"message": f"Hello Admin {current_user.full_name}"}
 
 
-@test_router.get("/sre-only")
-async def sre_only_route(
-    current_user: User = Depends(require_role(UserRole.SRE)),
+@test_router.get("/developer-only")
+async def developer_only_route(
+    current_user: User = Depends(require_role(UserRole.DEVELOPER)),
 ) -> dict[str, str]:
-    return {"message": f"Hello SRE {current_user.full_name}"}
+    return {"message": f"Hello Developer {current_user.full_name}"}
 
 
 # Include testing routes
 app.include_router(test_router)
+
+
+async def _seed_admin(
+    email: str = "admin@example.com",
+    password: str = "securepassword123",
+    full_name: str = "Admin User",
+) -> None:
+    """Insert an admin user directly via the repository."""
+    async with AsyncSessionLocal() as session:
+        repo = UserRepository(session=session)
+        await repo.create(
+            email=email,
+            hashed_password=hash_password(password),
+            full_name=full_name,
+            role=UserRole.ADMIN,
+        )
+        await session.commit()
+
+
+def _login(email: str, password: str) -> str:
+    """Login and return the access token."""
+    resp = client.post(
+        "/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -47,73 +76,107 @@ async def clean_database():
         await conn.run_sync(Base.metadata.drop_all)
 
 
-# ── Tests ────────────────────────────────────────────────
+# ── Registration tests ───────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_register_route_success() -> None:
-    """POST /auth/register promotes the very first user to admin."""
+async def test_register_without_auth_returns_401() -> None:
+    """POST /auth/register without token returns 401."""
     resp = client.post(
         "/auth/register",
         json={
-            "email": "developer@example.com",
+            "email": "user@example.com",
+            "password": "securepassword123",
+            "full_name": "New User",
+        },
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_register_with_developer_token_returns_403() -> None:
+    """POST /auth/register with a developer token returns 403."""
+    await _seed_admin()
+
+    # Admin creates a developer
+    admin_token = _login("admin@example.com", "securepassword123")
+    client.post(
+        "/auth/register",
+        json={
+            "email": "dev@example.com",
             "password": "securepassword123",
             "full_name": "Dev User",
         },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    # Developer tries to register another user
+    dev_token = _login("dev@example.com", "securepassword123")
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "another@example.com",
+            "password": "securepassword123",
+            "full_name": "Another User",
+        },
+        headers={"Authorization": f"Bearer {dev_token}"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_register_with_admin_creates_developer() -> None:
+    """POST /auth/register with admin token creates a developer."""
+    await _seed_admin()
+    admin_token = _login("admin@example.com", "securepassword123")
+
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "dev@example.com",
+            "password": "securepassword123",
+            "full_name": "Dev User",
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
 
     assert resp.status_code == 201
     data = resp.json()
-    assert data["email"] == "developer@example.com"
+    assert data["email"] == "dev@example.com"
     assert data["full_name"] == "Dev User"
-    assert data["role"] == UserRole.ADMIN.value
+    assert data["role"] == UserRole.DEVELOPER.value
     assert data["is_active"] is True
     assert "id" in data
     assert "password" not in data
 
 
 @pytest.mark.asyncio
-async def test_register_second_user_is_team_member() -> None:
-    """POST /auth/register defaults later users to team_member."""
-    client.post(
-        "/auth/register",
-        json={
-            "email": "first@example.com",
-            "password": "securepassword123",
-            "full_name": "First User",
-        },
-    )
+async def test_register_with_admin_creates_admin() -> None:
+    """POST /auth/register with admin token can create another admin."""
+    await _seed_admin()
+    admin_token = _login("admin@example.com", "securepassword123")
+
     resp = client.post(
         "/auth/register",
         json={
-            "email": "second@example.com",
+            "email": "admin2@example.com",
             "password": "securepassword123",
-            "full_name": "Second User",
+            "full_name": "Second Admin",
+            "role": "admin",
         },
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
 
     assert resp.status_code == 201
-    assert resp.json()["role"] == UserRole.TEAM_MEMBER.value
+    assert resp.json()["role"] == UserRole.ADMIN.value
 
 
 @pytest.mark.asyncio
-async def test_register_route_duplicate_email() -> None:
+async def test_register_duplicate_email() -> None:
     """POST /auth/register returns 409 for duplicate emails."""
-    payload = {
-        "email": "developer@example.com",
-        "password": "securepassword123",
-        "full_name": "Dev User",
-    }
-    client.post("/auth/register", json=payload)
-    resp = client.post("/auth/register", json=payload)
+    await _seed_admin()
+    admin_token = _login("admin@example.com", "securepassword123")
 
-    assert resp.status_code == 409
-    assert "already registered" in resp.json()["message"].lower()
-
-
-@pytest.mark.asyncio
-async def test_login_route_success_sets_refresh_cookie() -> None:
-    """POST /auth/login returns access token and sets HTTP-only refresh cookie."""
     client.post(
         "/auth/register",
         json={
@@ -121,12 +184,34 @@ async def test_login_route_success_sets_refresh_cookie() -> None:
             "password": "securepassword123",
             "full_name": "Dev User",
         },
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
+    resp = client.post(
+        "/auth/register",
+        json={
+            "email": "dev@example.com",
+            "password": "securepassword123",
+            "full_name": "Dev User",
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert resp.status_code == 409
+    assert "already registered" in resp.json()["message"].lower()
+
+
+# ── Login tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_login_success_sets_refresh_cookie() -> None:
+    """POST /auth/login returns access token and sets HTTP-only refresh cookie."""
+    await _seed_admin()
 
     resp = client.post(
         "/auth/login",
         json={
-            "email": "dev@example.com",
+            "email": "admin@example.com",
             "password": "securepassword123",
         },
     )
@@ -144,7 +229,7 @@ async def test_login_route_success_sets_refresh_cookie() -> None:
 
 
 @pytest.mark.asyncio
-async def test_login_route_invalid_credentials() -> None:
+async def test_login_invalid_credentials() -> None:
     """POST /auth/login returns 401 for bad passwords or emails."""
     resp = client.post(
         "/auth/login",
@@ -156,22 +241,18 @@ async def test_login_route_invalid_credentials() -> None:
     assert resp.status_code == 401
 
 
+# ── Token refresh tests ─────────────────────────────────
+
+
 @pytest.mark.asyncio
-async def test_refresh_route_success() -> None:
+async def test_refresh_success() -> None:
     """POST /auth/refresh rotates access token and refresh cookie."""
-    client.post(
-        "/auth/register",
-        json={
-            "email": "dev@example.com",
-            "password": "securepassword123",
-            "full_name": "Dev User",
-        },
-    )
+    await _seed_admin()
 
     login_resp = client.post(
         "/auth/login",
         json={
-            "email": "dev@example.com",
+            "email": "admin@example.com",
             "password": "securepassword123",
         },
     )
@@ -188,6 +269,9 @@ async def test_refresh_route_success() -> None:
     assert refresh_resp.cookies["refresh_token"] != old_cookie
 
 
+# ── Logout tests ─────────────────────────────────────────
+
+
 @pytest.mark.asyncio
 async def test_logout_clears_cookie() -> None:
     """POST /auth/logout deletes the refresh cookie."""
@@ -201,6 +285,9 @@ async def test_logout_clears_cookie() -> None:
     assert cookie is None or cookie == ""
 
 
+# ── Profile tests ────────────────────────────────────────
+
+
 @pytest.mark.asyncio
 async def test_me_route_requires_auth() -> None:
     """GET /auth/me returns 401 without bearer token."""
@@ -211,23 +298,8 @@ async def test_me_route_requires_auth() -> None:
 @pytest.mark.asyncio
 async def test_me_route_success() -> None:
     """GET /auth/me returns user profile when authenticated."""
-    client.post(
-        "/auth/register",
-        json={
-            "email": "dev@example.com",
-            "password": "securepassword123",
-            "full_name": "Dev User",
-        },
-    )
-
-    login_resp = client.post(
-        "/auth/login",
-        json={
-            "email": "dev@example.com",
-            "password": "securepassword123",
-        },
-    )
-    token = login_resp.json()["access_token"]
+    await _seed_admin()
+    token = _login("admin@example.com", "securepassword123")
 
     resp = client.get(
         "/auth/me",
@@ -236,22 +308,20 @@ async def test_me_route_success() -> None:
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["email"] == "dev@example.com"
-    assert data["full_name"] == "Dev User"
+    assert data["email"] == "admin@example.com"
+    assert data["full_name"] == "Admin User"
+
+
+# ── RBAC tests ───────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_rbac_restrictions() -> None:
     """Test role-based access restrictions on test routes."""
-    # First user becomes admin (bootstrap); register a second team member
-    client.post(
-        "/auth/register",
-        json={
-            "email": "admin@example.com",
-            "password": "securepassword123",
-            "full_name": "Admin User",
-        },
-    )
+    # Seed admin directly, then admin creates developer via API
+    await _seed_admin()
+    admin_token = _login("admin@example.com", "securepassword123")
+
     client.post(
         "/auth/register",
         json={
@@ -259,47 +329,35 @@ async def test_rbac_restrictions() -> None:
             "password": "securepassword123",
             "full_name": "Dev User",
         },
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
-    login_resp = client.post(
-        "/auth/login",
-        json={
-            "email": "dev@example.com",
-            "password": "securepassword123",
-        },
-    )
-    token = login_resp.json()["access_token"]
 
-    # Dev/team_member cannot access SRE or Admin route
-    resp = client.get(
-        "/auth-test/sre-only",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 403
+    # ── Developer: allowed on developer-only, denied on admin-only ──
+    dev_token = _login("dev@example.com", "securepassword123")
 
     resp = client.get(
-        "/auth-test/admin-only",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert resp.status_code == 403
-
-    # Promote user manually in DB to test SRE access
-    async with AsyncSessionLocal() as session:
-        from sqlalchemy import select
-        res = await session.execute(select(User).where(User.email == "dev@example.com"))
-        user = res.scalar_one()
-        user.role = UserRole.SRE.value
-        await session.commit()
-
-    # SRE can now access SRE route, but not Admin route
-    resp = client.get(
-        "/auth-test/sre-only",
-        headers={"Authorization": f"Bearer {token}"},
+        "/auth-test/developer-only",
+        headers={"Authorization": f"Bearer {dev_token}"},
     )
     assert resp.status_code == 200
-    assert "Hello SRE" in resp.json()["message"]
+    assert "Hello Developer" in resp.json()["message"]
 
     resp = client.get(
         "/auth-test/admin-only",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {dev_token}"},
+    )
+    assert resp.status_code == 403
+
+    # ── Admin: allowed on admin-only, denied on developer-only ──
+    resp = client.get(
+        "/auth-test/admin-only",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    assert "Hello Admin" in resp.json()["message"]
+
+    resp = client.get(
+        "/auth-test/developer-only",
+        headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 403

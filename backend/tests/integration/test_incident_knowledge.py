@@ -56,7 +56,7 @@ async def get_token_for_role(email: str, role: UserRole) -> str:
 async def test_incident_knowledge_crud_permissions() -> None:
     """Validate CRUD operations and role-based permissions."""
     admin_token = await get_token_for_role("admin@triage.ai", UserRole.ADMIN)
-    sre_token = await get_token_for_role("sre@triage.ai", UserRole.SRE)
+    dev_token = await get_token_for_role("dev@triage.ai", UserRole.DEVELOPER)
 
     # 1. Create a knowledge entry (Admin is authorized)
     payload = {
@@ -78,18 +78,18 @@ async def test_incident_knowledge_crud_permissions() -> None:
     ik_id = create_resp.json()["id"]
     assert create_resp.json()["title"] == "Stripe API down"
 
-    # 2. SRE trying to create knowledge entry -> 403 Forbidden
-    sre_create_resp = client.post(
+    # 2. Developer trying to create knowledge entry -> 403 Forbidden
+    dev_create_resp = client.post(
         "/incident-knowledge",
         json=payload,
-        headers={"Authorization": f"Bearer {sre_token}"},
+        headers={"Authorization": f"Bearer {dev_token}"},
     )
-    assert sre_create_resp.status_code == 403
+    assert dev_create_resp.status_code == 403
 
-    # 3. Read knowledge list (Authorized for SRE and Admin)
+    # 3. Read knowledge list (Authorized for developer and admin)
     list_resp = client.get(
         "/incident-knowledge",
-        headers={"Authorization": f"Bearer {sre_token}"},
+        headers={"Authorization": f"Bearer {dev_token}"},
     )
     assert list_resp.status_code == 200
     assert len(list_resp.json()["items"]) == 1
@@ -97,7 +97,7 @@ async def test_incident_knowledge_crud_permissions() -> None:
     # 4. Get knowledge detail
     detail_resp = client.get(
         f"/incident-knowledge/{ik_id}",
-        headers={"Authorization": f"Bearer {sre_token}"},
+        headers={"Authorization": f"Bearer {dev_token}"},
     )
     assert detail_resp.status_code == 200
     assert detail_resp.json()["id"] == ik_id
@@ -111,21 +111,21 @@ async def test_incident_knowledge_crud_permissions() -> None:
     assert update_resp.status_code == 200
     assert update_resp.json()["title"] == "Stripe API Webhook down"
 
-    # SRE trying to update -> 403 Forbidden
-    sre_update_resp = client.put(
+    # Developer trying to update -> 403 Forbidden
+    dev_update_resp = client.put(
         f"/incident-knowledge/{ik_id}",
         json={"title": "Fail Title"},
-        headers={"Authorization": f"Bearer {sre_token}"},
+        headers={"Authorization": f"Bearer {dev_token}"},
     )
-    assert sre_update_resp.status_code == 403
+    assert dev_update_resp.status_code == 403
 
     # 6. Delete knowledge entry (Admin is authorized)
-    # SRE trying to delete -> 403 Forbidden
-    sre_delete_resp = client.delete(
+    # Developer trying to delete -> 403 Forbidden
+    dev_delete_resp = client.delete(
         f"/incident-knowledge/{ik_id}",
-        headers={"Authorization": f"Bearer {sre_token}"},
+        headers={"Authorization": f"Bearer {dev_token}"},
     )
-    assert sre_delete_resp.status_code == 403
+    assert dev_delete_resp.status_code == 403
 
     # Admin delete -> 204 No Content
     delete_resp = client.delete(

@@ -56,7 +56,7 @@ MOCK_HISTORICAL_INCIDENTS = [
         "created_at": "2026-06-22T10:00:00Z",
         "report": {
             "root_cause": "Stripe API timeout",
-            "evidence_summary": "Stripe HTTP client timed out after 5.0 seconds in checkout view logs.",
+            "observability_analysis": "Stripe HTTP client timed out after 5.0 seconds in checkout view logs.",
             "affected_services": ["payment-service"],
             "remediation_steps": ["Check Stripe status, trigger manual retry of failed transactions."],
             "confidence_score": 0.88,
@@ -135,7 +135,7 @@ class MockIncidentKnowledgeProvider:
             if error_pattern:
                 report = inc.get("report") or {}
                 rc = report.get("root_cause", "").lower()
-                es = report.get("evidence_summary", "").lower()
+                es = report.get("observability_analysis", "").lower()
                 if error_pattern.lower() not in rc and error_pattern.lower() not in es:
                     continue
             results.append(inc)

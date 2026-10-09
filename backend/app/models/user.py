@@ -44,7 +44,7 @@ class User(Base):
         String(200), nullable=False
     )
     role: Mapped[str] = mapped_column(
-        String(50), nullable=False, default=UserRole.TEAM_MEMBER
+        String(50), nullable=False, default=UserRole.DEVELOPER
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True

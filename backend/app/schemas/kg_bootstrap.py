@@ -41,6 +41,11 @@ class KgBootstrapStatusResponse(BaseModel):
     pending_proposal_id: Optional[str] = None
     approved_proposal_id: Optional[str] = None
     pending_count: int = 0
+    source: Optional[str] = None
+    repo: Optional[str] = None
+    org: Optional[str] = None
+    architecture_type: Optional[str] = None
+    owner_team: Optional[str] = None
 
 
 class KgNode(BaseModel):

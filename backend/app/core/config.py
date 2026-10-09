@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Initial admin seeding (first startup only)
+    ADMIN_EMAIL: Optional[str] = None
+    ADMIN_PASSWORD: Optional[str] = None
+
     # PostgreSQL Database
     DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/incident_triage"
 
@@ -72,8 +76,12 @@ class Settings(BaseSettings):
     # Services
     SERVICES: str = "frontend,cart-service,product-catalog-service,currency-service,payment-service,shipping-service,email-service,checkout-service,recommendation-service,ad-service"
 
-    # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    # CORS — accepts a JSON list or comma-separated string.
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:5173",
+    ]
 
     # Data paths (for dev mode)
     DATA_DIR: Path = PROJECT_ROOT / "data"

@@ -146,12 +146,17 @@ class IncidentService:
         await self._repo.save_report(
             incident_id=incident_id,
             root_cause=report.root_cause,
-            evidence_summary=report.evidence_summary,
             affected_services=report.affected_services,
+            raw_logs=getattr(report, "raw_logs", {}),
+            raw_metrics=getattr(report, "raw_metrics", {}),
+            observability_analysis=getattr(
+                report, "observability_analysis", ""
+            ),
+            code_diffs=getattr(report, "code_diffs", {}),
+            past_resolutions=getattr(report, "past_resolutions", []),
             remediation_steps=report.remediation_steps,
             confidence_score=report.confidence_score,
             uncertainty=getattr(report, "uncertainty", ""),
-            model_used=getattr(report, "model_used", ""),
         )
         await self._repo.update_status(
             incident_id, IncidentStatus.COMPLETED

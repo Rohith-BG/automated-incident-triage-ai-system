@@ -198,6 +198,77 @@ class IncidentRepository:
 
         return incidents, next_cursor, has_more
 
+    # ── Aggregate counts ────────────────────────────────
+
+    async def count_active(self) -> int:
+        """Count incidents currently in an active status.
+
+        Active means the status is in IncidentStatus.active_statuses()
+        (INVESTIGATING or ROOT_CAUSE_IDENTIFIED).
+
+        Returns:
+            Number of active incidents.
+        """
+        stmt = select(func.count()).select_from(Incident).where(
+            Incident.status.in_(
+                [s.value for s in IncidentStatus.active_statuses()]
+            )
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def count_resolved_since(self, start: datetime) -> int:
+        """Count incidents resolved or completed after ``start``.
+
+        Resolved means the status is RESOLVED or COMPLETED and the
+        incident was last updated on or after ``start``.
+
+        Args:
+            start: Lower bound (UTC, timezone-naive) for ``updated_at``.
+
+        Returns:
+            Number of resolved/completed incidents since ``start``.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Incident)
+            .where(
+                Incident.status.in_(
+                    [
+                        IncidentStatus.RESOLVED.value,
+                        IncidentStatus.COMPLETED.value,
+                    ]
+                ),
+                Incident.updated_at >= start,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def count_active_by_service(self) -> dict[str, int]:
+        """Count active incidents grouped by service.
+
+        Returns:
+            Mapping of ``service_id`` to its number of active incidents.
+        """
+        stmt = (
+            select(
+                Incident.service_id,
+                func.count().label("count"),
+            )
+            .where(
+                Incident.status.in_(
+                    [s.value for s in IncidentStatus.active_statuses()]
+                )
+            )
+            .group_by(Incident.service_id)
+        )
+        result = await self._session.execute(stmt)
+        return {
+            service_id: int(count)
+            for service_id, count in result.all()
+        }
+
     async def update_status(
         self,
         incident_id: str,
@@ -250,38 +321,85 @@ class IncidentRepository:
         self,
         incident_id: str,
         root_cause: str,
-        evidence_summary: str,
         affected_services: list[str],
-        remediation_steps: list[str],
-        confidence_score: float,
+        raw_logs: dict | None = None,
+        raw_metrics: dict | None = None,
+        observability_analysis: str = "",
+        code_diffs: dict | None = None,
+        past_resolutions: list | None = None,
+        remediation_steps: list[str] | None = None,
+        confidence_score: float = 0.0,
         uncertainty: str = "",
-        model_used: str = "",
     ) -> RootCauseReportModel:
         """Persist a root-cause report for an incident.
+
+        Idempotent: ``root_cause_reports.incident_id`` is UNIQUE, so a
+        re-triggered investigation updates the existing row rather than
+        raising an IntegrityError. An IntegrityError here would abort the
+        surrounding transaction and leave the incident in INVESTIGATING.
 
         Args:
             incident_id: Incident this report belongs to.
             root_cause: Diagnosis text.
-            evidence_summary: Supporting evidence summary.
             affected_services: List of affected service IDs.
+            raw_logs: Raw log/trace MCP data per service.
+            raw_metrics: Raw metric/anomaly MCP data per service.
+            observability_analysis: LLM-interpreted observability summary.
+            code_diffs: Commit/diff data per service.
+            past_resolutions: Matching prior resolutions (empty if none).
             remediation_steps: Actionable steps.
-            confidence_score: 0.0–1.0 confidence.
+            confidence_score: 0.0-1.0 confidence.
             uncertainty: Known evidence gaps.
-            model_used: Model identifier.
 
         Returns:
-            The newly created RootCauseReportModel.
+            The created or updated RootCauseReportModel.
         """
+        report = await self.get_report(incident_id)
+        if report is not None:
+            report.root_cause = root_cause
+            report.affected_services = affected_services
+            report.raw_logs = raw_logs or {}
+            report.raw_metrics = raw_metrics or {}
+            report.observability_analysis = observability_analysis
+            report.code_diffs = code_diffs or {}
+            report.past_resolutions = past_resolutions or []
+            report.remediation_steps = remediation_steps or []
+            report.confidence_score = confidence_score
+            report.uncertainty = uncertainty
+            self._session.add(report)
+            await self._session.flush()
+            return report
+
         report = RootCauseReportModel(
             incident_id=incident_id,
             root_cause=root_cause,
-            evidence_summary=evidence_summary,
             affected_services=affected_services,
-            remediation_steps=remediation_steps,
+            raw_logs=raw_logs or {},
+            raw_metrics=raw_metrics or {},
+            observability_analysis=observability_analysis,
+            code_diffs=code_diffs or {},
+            past_resolutions=past_resolutions or [],
+            remediation_steps=remediation_steps or [],
             confidence_score=confidence_score,
             uncertainty=uncertainty,
-            model_used=model_used,
         )
         self._session.add(report)
         await self._session.flush()
         return report
+
+    async def get_report(
+        self, incident_id: str
+    ) -> Optional[RootCauseReportModel]:
+        """Fetch the report row for an incident, if one exists.
+
+        Args:
+            incident_id: Incident whose report to fetch.
+
+        Returns:
+            The RootCauseReportModel, or None if absent.
+        """
+        stmt = select(RootCauseReportModel).where(
+            RootCauseReportModel.incident_id == incident_id
+        )
+        result = await self._session.execute(stmt)
+        return result.scalars().first()

@@ -13,3 +13,8 @@ data/*
 triage.db
 .vscode
 CLAUDE.md
+.claude/
+.impeccable/
+DESIGN.md
+PRODUCT.md
+.mypy_cache/

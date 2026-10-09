@@ -32,26 +32,26 @@ def test_password_hashing_and_verification() -> None:
 
 def test_jwt_access_token_creation_and_decoding() -> None:
     """Test that access tokens can be created and decoded correctly."""
-    data = {"sub": "user-id-123", "role": "sre"}
+    data = {"sub": "user-id-123", "role": "developer"}
     token = create_access_token(data, expires_delta=timedelta(minutes=5))
 
     decoded = decode_token(token)
 
     assert decoded["sub"] == "user-id-123"
-    assert decoded["role"] == "sre"
+    assert decoded["role"] == "developer"
     assert decoded["type"] == "access"
     assert "exp" in decoded
 
 
 def test_jwt_refresh_token_creation_and_decoding() -> None:
     """Test that refresh tokens can be created and decoded correctly."""
-    data = {"sub": "user-id-123", "role": "team_member"}
+    data = {"sub": "user-id-123", "role": "admin"}
     token = create_refresh_token(data)
 
     decoded = decode_token(token)
 
     assert decoded["sub"] == "user-id-123"
-    assert decoded["role"] == "team_member"
+    assert decoded["role"] == "admin"
     assert decoded["type"] == "refresh"
     assert "exp" in decoded
 

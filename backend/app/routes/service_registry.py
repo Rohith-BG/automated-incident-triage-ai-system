@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, status
 
 from ..dependencies import (
     get_current_user,
+    get_kg_proposal_service,
     get_service_registry_service,
     require_role,
 )
@@ -17,7 +18,7 @@ from ..schemas.service_registry import (
     ServiceRegistryResponse,
     ServiceRegistryUpdate,
 )
-from ..services.service_registry import ServiceRegistryService
+from ..services.service_registry import KGProposalService, ServiceRegistryService
 
 router = APIRouter(prefix="/service-registry", tags=["Service Registry"])
 
@@ -81,3 +82,21 @@ async def delete_service(
 ) -> None:
     """Deactivate a service from the registry (Admin only)."""
     await service.delete_service(service_id)
+
+
+@router.post(
+    "/sync-from-kg",
+    status_code=status.HTTP_200_OK,
+    summary="Sync services from the active Knowledge Graph into the registry",
+)
+async def sync_from_kg(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    proposal_service: "KGProposalService" = Depends(get_kg_proposal_service),
+) -> dict[str, Any]:
+    """Read all services from the active KG and upsert into the registry.
+
+    Useful when a KG was approved before the automatic sync was added,
+    or to refresh registry metadata from the graph.
+    """
+    synced = await proposal_service.sync_services_from_kg()
+    return {"synced": synced, "message": f"Synced {synced} services from KG"}

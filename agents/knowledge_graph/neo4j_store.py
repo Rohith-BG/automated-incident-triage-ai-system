@@ -26,7 +26,13 @@ class Neo4jGraphStore:
                 "neo4j package is required for Neo4jGraphStore. "
                 "Install it via `pip install neo4j`."
             )
-        self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+        self._driver = AsyncGraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            connection_timeout=30.0,
+            connection_acquisition_timeout=30.0,
+            max_transaction_retry_time=30.0,
+        )
 
     async def close(self) -> None:
         """Close driver session."""
@@ -95,32 +101,28 @@ class Neo4jGraphStore:
             return await session.execute_read(_read)
 
     async def get_owner_team(self, service_id: str) -> dict[str, str]:
-        """Fetch owner team node."""
-        async def _read(tx: Any) -> Optional[dict[str, Any]]:
-            result = await tx.run(
-                "MATCH (s:Service {id: $service_id})-[:OWNED_BY]->(t:Team) RETURN t",
-                service_id=service_id,
-            )
-            record = await result.single()
-            return dict(record["t"]) if record else None
+        """Derive owner from Service node metadata.
 
-        async with self._driver.session() as session:
-            record = await session.execute_read(_read)
-            if record:
-                return record
-            # Fallback to property check
+        KG tracks blast radius and dependencies only — no
+        Team nodes or OWNED_BY relationships.
+        """
+        try:
             svc = await self.get_service_info(service_id)
-            return {"id": svc.get("owner_team", "unknown"), "oncall_slack": "unknown"}
+            return {
+                "id": svc.get("owner_team", "unknown"),
+                "oncall_slack": svc.get("oncall_slack", "unknown"),
+            }
+        except KeyError:
+            return {"id": "unknown", "oncall_slack": "unknown"}
 
-    async def get_historical_incidents(self, service_id: str) -> list[dict[str, Any]]:
-        """Fetch past incidents attached to service."""
-        async def _read(tx: Any) -> list[dict[str, Any]]:
-            result = await tx.run(
-                "MATCH (s:Service {id: $service_id})<-[:AFFECTED]-(i:Incident) RETURN i",
-                service_id=service_id,
-            )
-            records = await result.data()
-            return [r["i"] for r in records if "i" in r]
+    async def get_historical_incidents(
+        self, service_id: str
+    ) -> list[dict[str, Any]]:
+        """Return empty — historical incidents live in the DB,
+        not the knowledge graph. Sourced via incident_knowledge
+        provider instead.
+        """
+        return []
 
         async with self._driver.session() as session:
             return await session.execute_read(_read)
@@ -251,62 +253,94 @@ class Neo4jGraphStore:
     async def _staging_apply_mutations(
         self, mutations: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Apply mutations to the staging graph."""
-        applied = 0
-        errors: list[str] = []
+        """Apply mutations to the staging graph in batched Cypher transactions."""
+        nodes: list[dict[str, Any]] = []
+        contains: list[dict[str, str]] = []
+        depends: list[dict[str, str]] = []
+        rem_deps: list[dict[str, str]] = []
+        rem_nodes: list[str] = []
+        meta_updates: list[dict[str, Any]] = []
+
         for m in mutations:
             action = m.get("action")
-            try:
-                if action == "add_node":
-                    props = dict(m.get("metadata", {}))
-                    props["id"] = m["node"]
-                    await self._run_write(
-                        "MERGE (s:StagingService {id: $node_id}) SET s += $props",
-                        node_id=m["node"],
-                        props=props,
-                    )
-                elif action == "add_dependency":
-                    await self._run_write(
-                        "MERGE (a:StagingService {id: $from_id}) "
-                        "MERGE (b:StagingService {id: $to_id}) "
-                        "MERGE (a)-[:STAGING_DEPENDS_ON]->(b)",
-                        from_id=m["from"],
-                        to_id=m["to"],
-                    )
-                elif action == "remove_dependency":
-                    await self._run_write(
-                        "MATCH (a:StagingService {id: $from_id})"
-                        "-[r:STAGING_DEPENDS_ON]->"
-                        "(b:StagingService {id: $to_id}) DELETE r",
-                        from_id=m["from"],
-                        to_id=m["to"],
-                    )
-                elif action == "remove_node":
-                    await self._run_write(
-                        "MATCH (s:StagingService {id: $node_id}) "
-                        "DETACH DELETE s",
-                        node_id=m["node"],
-                    )
-                elif action == "update_metadata":
-                    props = {m['field']: m['value']}
-                    await self._run_write(
-                        "MATCH (s:StagingService {id: $node_id}) "
-                        "SET s = s + $props",
-                        node_id=m["node"],
-                        props=props,
-                    )
-                elif action == "add_contains":
-                    await self._run_write(
-                        "MERGE (a:StagingService {id: $from_id}) "
-                        "MERGE (b:StagingService {id: $to_id}) "
-                        "MERGE (a)-[:STAGING_CONTAINS]->(b)",
-                        from_id=m["from"],
-                        to_id=m["to"],
-                    )
-                applied += 1
-            except Exception as e:
-                logger.error("Failed staging mutation %s: %s", m, e)
-                errors.append(str(e))
+            if action == "add_node":
+                props = dict(m.get("metadata", {}))
+                props["id"] = m["node"]
+                nodes.append({"id": m["node"], "props": props})
+            elif action == "add_contains":
+                contains.append({"from_id": m["from"], "to_id": m["to"]})
+            elif action == "add_dependency":
+                depends.append({"from_id": m["from"], "to_id": m["to"]})
+            elif action == "remove_dependency":
+                rem_deps.append({"from_id": m["from"], "to_id": m["to"]})
+            elif action == "remove_node":
+                rem_nodes.append(m["node"])
+            elif action == "update_metadata":
+                meta_updates.append(
+                    {"node_id": m["node"], "field": m["field"], "value": m["value"]}
+                )
+
+        async def _apply_all(tx: Any) -> int:
+            count = 0
+            if nodes:
+                await tx.run(
+                    "UNWIND $batch AS item "
+                    "MERGE (s:StagingService {id: item.id}) SET s += item.props",
+                    batch=nodes,
+                )
+                count += len(nodes)
+            if contains:
+                await tx.run(
+                    "UNWIND $batch AS item "
+                    "MERGE (a:StagingService {id: item.from_id}) "
+                    "MERGE (b:StagingService {id: item.to_id}) "
+                    "MERGE (a)-[:STAGING_CONTAINS]->(b)",
+                    batch=contains,
+                )
+                count += len(contains)
+            if depends:
+                await tx.run(
+                    "UNWIND $batch AS item "
+                    "MERGE (a:StagingService {id: item.from_id}) "
+                    "MERGE (b:StagingService {id: item.to_id}) "
+                    "MERGE (a)-[:STAGING_DEPENDS_ON]->(b)",
+                    batch=depends,
+                )
+                count += len(depends)
+            if rem_deps:
+                await tx.run(
+                    "UNWIND $batch AS item "
+                    "MATCH (a:StagingService {id: item.from_id})"
+                    "-[r:STAGING_DEPENDS_ON]->"
+                    "(b:StagingService {id: item.to_id}) DELETE r",
+                    batch=rem_deps,
+                )
+                count += len(rem_deps)
+            if rem_nodes:
+                await tx.run(
+                    "UNWIND $batch AS node_id "
+                    "MATCH (s:StagingService {id: node_id}) DETACH DELETE s",
+                    batch=rem_nodes,
+                )
+                count += len(rem_nodes)
+            for upd in meta_updates:
+                props = {upd["field"]: upd["value"]}
+                await tx.run(
+                    "MATCH (s:StagingService {id: $node_id}) SET s += $props",
+                    node_id=upd["node_id"],
+                    props=props,
+                )
+                count += 1
+            return count
+
+        applied = 0
+        errors: list[str] = []
+        try:
+            async with self._driver.session() as session:
+                applied = await session.execute_write(_apply_all)
+        except Exception as e:
+            logger.error("Failed staging mutations: %s", e)
+            errors.append(str(e))
         return {"applied": applied, "errors": errors}
 
     async def _run_write(self, query: LiteralString, **params: Any) -> None:

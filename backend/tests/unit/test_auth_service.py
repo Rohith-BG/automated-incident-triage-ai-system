@@ -25,17 +25,15 @@ def auth_service(mock_repo):
 
 @pytest.mark.asyncio
 async def test_register_success(auth_service, mock_repo) -> None:
-    """register() creates a team member when users already exist."""
+    """register() creates a user with the requested role."""
     mock_repo.get_by_email = AsyncMock(return_value=None)
-    mock_repo.count = AsyncMock(return_value=3)
 
-    # Mock create to return a User model
     mock_user = User(
         id="user-123",
         email="new@example.com",
         hashed_password="hashed_pass",
         full_name="Alice Smith",
-        role=UserRole.TEAM_MEMBER,
+        role=UserRole.DEVELOPER,
     )
     mock_repo.create = AsyncMock(return_value=mock_user)
 
@@ -43,43 +41,66 @@ async def test_register_success(auth_service, mock_repo) -> None:
         email="new@example.com",
         password="password123",
         full_name="Alice Smith",
+        role=UserRole.DEVELOPER,
     )
 
     assert result == mock_user
     mock_repo.get_by_email.assert_called_once_with("new@example.com")
-    mock_repo.count.assert_called_once_with()
-    # Verify that mock_repo.create was called with hashed password
     mock_repo.create.assert_called_once()
     kwargs = mock_repo.create.call_args.kwargs
     assert kwargs["email"] == "new@example.com"
     assert kwargs["full_name"] == "Alice Smith"
-    assert kwargs["role"] == UserRole.TEAM_MEMBER
+    assert kwargs["role"] == UserRole.DEVELOPER
     assert verify_password("password123", kwargs["hashed_password"]) is True
 
 
 @pytest.mark.asyncio
-async def test_register_first_user_becomes_admin(auth_service, mock_repo) -> None:
-    """register() promotes the very first user to admin (bootstrap)."""
+async def test_register_with_admin_role(auth_service, mock_repo) -> None:
+    """register() creates a user with admin role when requested."""
     mock_repo.get_by_email = AsyncMock(return_value=None)
-    mock_repo.count = AsyncMock(return_value=0)
 
     mock_user = User(
         id="user-admin",
-        email="founder@example.com",
+        email="admin2@example.com",
         hashed_password="hashed_pass",
-        full_name="Founder",
+        full_name="Second Admin",
         role=UserRole.ADMIN,
     )
     mock_repo.create = AsyncMock(return_value=mock_user)
 
     result = await auth_service.register(
-        email="founder@example.com",
+        email="admin2@example.com",
         password="password123",
-        full_name="Founder",
+        full_name="Second Admin",
+        role=UserRole.ADMIN,
     )
 
     assert result == mock_user
     assert mock_repo.create.call_args.kwargs["role"] == UserRole.ADMIN
+
+
+@pytest.mark.asyncio
+async def test_register_defaults_to_developer(auth_service, mock_repo) -> None:
+    """register() defaults to developer role when no role specified."""
+    mock_repo.get_by_email = AsyncMock(return_value=None)
+
+    mock_user = User(
+        id="user-dev",
+        email="dev@example.com",
+        hashed_password="hashed_pass",
+        full_name="Dev User",
+        role=UserRole.DEVELOPER,
+    )
+    mock_repo.create = AsyncMock(return_value=mock_user)
+
+    result = await auth_service.register(
+        email="dev@example.com",
+        password="password123",
+        full_name="Dev User",
+    )
+
+    assert result == mock_user
+    assert mock_repo.create.call_args.kwargs["role"] == UserRole.DEVELOPER
 
 
 @pytest.mark.asyncio
@@ -115,7 +136,7 @@ async def test_login_success(auth_service, mock_repo) -> None:
         email="user@example.com",
         hashed_password=hashed,
         full_name="Bob Doe",
-        role=UserRole.SRE,
+        role=UserRole.DEVELOPER,
         is_active=True,
     )
     mock_repo.get_by_email = AsyncMock(return_value=user)
@@ -197,13 +218,13 @@ async def test_refresh_success(auth_service, mock_repo) -> None:
     """refresh() rotates access and refresh tokens for active user."""
     from backend.app.core.security import create_refresh_token
     
-    refresh_token = create_refresh_token({"sub": "user-123", "role": "sre"})
+    refresh_token = create_refresh_token({"sub": "user-123", "role": "developer"})
     user = User(
         id="user-123",
         email="user@example.com",
         hashed_password="hash",
         full_name="Bob Doe",
-        role=UserRole.SRE,
+        role=UserRole.DEVELOPER,
         is_active=True,
     )
     mock_repo.get_by_id = AsyncMock(return_value=user)
@@ -220,13 +241,13 @@ async def test_refresh_inactive_user(auth_service, mock_repo) -> None:
     """refresh() raises UnauthorizedException if user is deactivated."""
     from backend.app.core.security import create_refresh_token
     
-    refresh_token = create_refresh_token({"sub": "user-123", "role": "sre"})
+    refresh_token = create_refresh_token({"sub": "user-123", "role": "developer"})
     user = User(
         id="user-123",
         email="user@example.com",
         hashed_password="hash",
         full_name="Bob Doe",
-        role=UserRole.SRE,
+        role=UserRole.DEVELOPER,
         is_active=False,
     )
     mock_repo.get_by_id = AsyncMock(return_value=user)
@@ -235,3 +256,84 @@ async def test_refresh_inactive_user(auth_service, mock_repo) -> None:
         await auth_service.refresh(refresh_token)
 
     assert "deactivated" in exc_info.value.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_users(auth_service, mock_repo) -> None:
+    """list_users() returns all users from the repository."""
+    user_a = User(
+        id="u-1", email="a@x.com", hashed_password="h",
+        full_name="A", role=UserRole.ADMIN, is_active=True,
+    )
+    user_b = User(
+        id="u-2", email="b@x.com", hashed_password="h",
+        full_name="B", role=UserRole.DEVELOPER, is_active=True,
+    )
+    mock_repo.list_all = AsyncMock(return_value=[user_a, user_b])
+
+    result = await auth_service.list_users()
+
+    assert len(result) == 2
+    assert result[0].id == "u-1"
+    mock_repo.list_all.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_update_user_success(auth_service, mock_repo) -> None:
+    """update_user() patches name and role."""
+    user = User(
+        id="u-1", email="a@x.com", hashed_password="h",
+        full_name="Old Name", role=UserRole.DEVELOPER, is_active=True,
+    )
+    updated = User(
+        id="u-1", email="a@x.com", hashed_password="h",
+        full_name="New Name", role=UserRole.ADMIN, is_active=True,
+    )
+    mock_repo.get_by_id = AsyncMock(return_value=user)
+    mock_repo.update = AsyncMock(return_value=updated)
+
+    result = await auth_service.update_user(
+        user_id="u-1",
+        admin_id="u-admin",
+        full_name="New Name",
+        role=UserRole.ADMIN,
+    )
+
+    assert result.full_name == "New Name"
+    assert result.role == UserRole.ADMIN
+
+
+@pytest.mark.asyncio
+async def test_update_user_not_found(auth_service, mock_repo) -> None:
+    """update_user() raises NotFoundException for missing user."""
+    from backend.app.exceptions import NotFoundException
+
+    mock_repo.get_by_id = AsyncMock(return_value=None)
+
+    with pytest.raises(NotFoundException):
+        await auth_service.update_user(
+            user_id="missing",
+            admin_id="admin-1",
+            full_name="X",
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_user_self_deactivate_blocked(
+    auth_service, mock_repo,
+) -> None:
+    """update_user() blocks an admin from deactivating themselves."""
+    from backend.app.exceptions import BadRequestException
+
+    user = User(
+        id="admin-1", email="a@x.com", hashed_password="h",
+        full_name="Admin", role=UserRole.ADMIN, is_active=True,
+    )
+    mock_repo.get_by_id = AsyncMock(return_value=user)
+
+    with pytest.raises(BadRequestException, match="own account"):
+        await auth_service.update_user(
+            user_id="admin-1",
+            admin_id="admin-1",
+            is_active=False,
+        )

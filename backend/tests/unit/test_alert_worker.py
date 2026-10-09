@@ -1,4 +1,6 @@
-"""Unit test for SQS AlertWorker."""
+"""Unit tests for SQS AlertWorker — including CloudWatch payload handling."""
+
+import json
 
 import json
 
@@ -7,7 +9,13 @@ import pytest_asyncio
 from backend.app.core.database import AsyncSessionLocal, Base, engine
 from backend.app.enums import IncidentStatus
 from backend.app.schemas.queue_messages import AlertQueueMessage
-from backend.app.workers.alert_worker import AlertWorker
+from backend.app.workers.alert_worker import (
+    AlertWorker,
+    _build_alert_message_from_alarm,
+    _is_cloudwatch_envelope,
+    _parse_cloudwatch_envelope,
+)
+from backend.app.schemas.queue_messages import CloudWatchAlarmPayload
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -19,6 +27,9 @@ async def clean_database():
     yield
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+
+# ── Existing AlertQueueMessage tests (backward compat) ──────
 
 
 @pytest.mark.asyncio
@@ -100,3 +111,152 @@ async def test_alert_worker_skips_dlq_when_unconfigured() -> None:
 
     assert fake.sent == []
     assert fake.deleted == []
+
+
+# ── CloudWatch envelope detection ───────────────────────────
+
+
+def test_is_cloudwatch_direct_alarm() -> None:
+    """Direct CloudWatch alarm JSON is detected."""
+    data = {"AlarmName": "my-alarm", "Trigger": {}}
+    assert _is_cloudwatch_envelope(data) is True
+
+
+def test_is_cloudwatch_sns_envelope() -> None:
+    """SNS-wrapped CloudWatch alarm is detected."""
+    data = {
+        "Type": "Notification",
+        "Message": '{"AlarmName": "my-alarm"}',
+    }
+    assert _is_cloudwatch_envelope(data) is True
+
+
+def test_is_not_cloudwatch_internal_message() -> None:
+    """Internal AlertQueueMessage is not mis-detected as CloudWatch."""
+    data = {
+        "service_id": "cart-service",
+        "alert_message": "test",
+    }
+    assert _is_cloudwatch_envelope(data) is False
+
+
+# ── CloudWatch envelope parsing ─────────────────────────────
+
+
+def test_parse_sns_envelope() -> None:
+    """SNS envelope Message string is unwrapped to alarm dict."""
+    inner = {"AlarmName": "test-alarm", "NewStateValue": "ALARM"}
+    raw = {
+        "Type": "Notification",
+        "Message": json.dumps(inner),
+    }
+    result = _parse_cloudwatch_envelope(raw)
+    assert result["AlarmName"] == "test-alarm"
+
+
+def test_parse_direct_alarm() -> None:
+    """Direct alarm payload passes through unchanged."""
+    raw = {"AlarmName": "test-alarm", "Trigger": {}}
+    result = _parse_cloudwatch_envelope(raw)
+    assert result is raw  # same object, no copy
+
+
+# ── Alert message construction ──────────────────────────────
+
+
+def test_build_alert_message_basic() -> None:
+    alarm = CloudWatchAlarmPayload(
+        AlarmName="cart-service-5xx-alarm",
+        AlarmDescription="High 5xx rate on cart-service",
+        NewStateReason="Threshold Crossed: 15 > 10",
+        Trigger={
+            "MetricName": "HTTPCode_Target_5XX_Count",
+            "Namespace": "AWS/ApplicationELB",
+        },
+    )
+    msg = _build_alert_message_from_alarm(alarm)
+    assert "cart-service-5xx-alarm" in msg
+    assert "High 5xx rate" in msg
+    assert "Threshold Crossed" in msg
+    assert "HTTPCode_Target_5XX_Count" in msg
+
+
+def test_build_alert_message_no_description() -> None:
+    alarm = CloudWatchAlarmPayload(
+        AlarmName="alarm-xyz",
+        NewStateReason="Threshold crossed",
+    )
+    msg = _build_alert_message_from_alarm(alarm)
+    assert "alarm-xyz" in msg
+    assert "Threshold crossed" in msg
+
+
+# ── AlertQueueMessage backward compatibility ────────────────
+
+
+def test_alert_queue_message_with_service_id_only() -> None:
+    """Legacy callers with service_id continue to work."""
+    msg = AlertQueueMessage(
+        service_id="cart-service",
+        alert_message="test error",
+    )
+    assert msg.service_id == "cart-service"
+
+
+def test_alert_queue_message_with_service_name_only() -> None:
+    """CloudWatch-resolved path with service_name only."""
+    msg = AlertQueueMessage(
+        service_name="cart-service",
+        alert_message="test error",
+    )
+    assert msg.service_name == "cart-service"
+    assert msg.service_id is None
+
+
+def test_alert_queue_message_requires_at_least_one() -> None:
+    """Validation fails if neither service_id nor service_name."""
+    with pytest.raises(ValueError, match="service_id"):
+        AlertQueueMessage(alert_message="test error")
+
+
+# ── CloudWatchAlarmPayload parsing ──────────────────────────
+
+
+def test_cloudwatch_payload_parses_full_alarm() -> None:
+    raw = {
+        "AlarmName": "cart-service-5xx-alarm",
+        "AlarmDescription": "High 5xx rate",
+        "AWSAccountId": "123456789012",
+        "NewStateValue": "ALARM",
+        "NewStateReason": "Threshold Crossed",
+        "StateChangeTime": "2026-10-01T12:00:00.000+0000",
+        "Region": "us-east-1",
+        "OldStateValue": "OK",
+        "Trigger": {
+            "MetricName": "HTTPCode_Target_5XX_Count",
+            "Namespace": "AWS/ApplicationELB",
+            "Dimensions": [
+                {
+                    "name": "TargetGroup",
+                    "value": "tg/cart-service/abc",
+                },
+            ],
+            "Period": 60,
+            "Threshold": 10.0,
+            "ComparisonOperator": "GreaterThanThreshold",
+        },
+    }
+    alarm = CloudWatchAlarmPayload(**raw)
+    assert alarm.AlarmName == "cart-service-5xx-alarm"
+    assert alarm.Trigger.Namespace == "AWS/ApplicationELB"
+    assert len(alarm.Trigger.Dimensions) == 1
+    assert alarm.Trigger.Dimensions[0].name == "TargetGroup"
+    assert alarm.Trigger.Dimensions[0].value == "tg/cart-service/abc"
+
+
+def test_cloudwatch_payload_minimal() -> None:
+    """Only AlarmName is required."""
+    alarm = CloudWatchAlarmPayload(AlarmName="test")
+    assert alarm.AlarmName == "test"
+    assert alarm.NewStateValue == "ALARM"
+    assert alarm.Trigger.Dimensions == []

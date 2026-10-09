@@ -138,8 +138,12 @@ class IncidentController:
             report = ReportResponse(
                 id=r.id,
                 root_cause=r.root_cause,
-                evidence_summary=r.evidence_summary,
                 affected_services=list(r.affected_services),
+                raw_logs=r.raw_logs or {},
+                raw_metrics=r.raw_metrics or {},
+                observability_analysis=r.observability_analysis or "",
+                code_diffs=r.code_diffs or {},
+                past_resolutions=r.past_resolutions or [],
                 remediation_steps=list(r.remediation_steps),
                 confidence_score=r.confidence_score,
                 created_at=r.created_at,

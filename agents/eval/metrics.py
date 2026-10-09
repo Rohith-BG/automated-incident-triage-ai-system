@@ -35,17 +35,18 @@ def compute_jaccard_similarity(set_a: list[str], set_b: list[str]) -> float:
 
 
 def compute_faithfulness_score(
-    evidence_summary: str,
+    observability_analysis: str,
     collected_evidence: dict[str, Any],
 ) -> float:
     """Compute evidence-grounding faithfulness score.
 
-    Checks whether the LLM evidence_summary references terms actually
-    present in the collected evidence. Prevents hallucinated claims.
+    Checks whether the LLM observability_analysis references terms
+    actually present in the collected evidence. Prevents hallucinated
+    claims.
 
     Returns a score between 0.0 (no grounding) and 1.0 (fully grounded).
     """
-    if not evidence_summary:
+    if not observability_analysis:
         return 0.0
 
     # Flatten all collected evidence into a single searchable text
@@ -54,7 +55,7 @@ def compute_faithfulness_score(
         # No evidence was collected — can't ground anything
         return 0.0
 
-    # Extract meaningful tokens from evidence_summary (>3 chars, not stopwords)
+    # Extract meaningful tokens from observability_analysis (>3 chars, not stopwords)
     stopwords = {
         "the", "and", "for", "was", "that", "this", "with", "from",
         "are", "were", "been", "have", "has", "had", "not", "but",
@@ -62,7 +63,7 @@ def compute_faithfulness_score(
         "into", "more", "than", "its", "can", "all", "will",
     }
     summary_tokens = [
-        w for w in evidence_summary.lower().split()
+        w for w in observability_analysis.lower().split()
         if len(w) > 3 and w not in stopwords
     ]
 

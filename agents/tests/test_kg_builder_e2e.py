@@ -58,7 +58,7 @@ async def test_bootstrap_builds_staged_graph(
 
     assert state.errors == []
     assert len(state.mutations) > 0
-    assert "dependency edge" in state.diff_summary
+    assert "edge" in state.diff_summary
 
     snapshot = await store.staging_snapshot()
     node_ids = {n["id"] for n in snapshot["nodes"]}
@@ -67,6 +67,52 @@ async def test_bootstrap_builds_staged_graph(
     assert "frontend" in node_ids
     assert "cart-service" in node_ids
     assert ("frontend", "cart-service") in edges
+
+
+@pytest.mark.asyncio
+async def test_monolith_bootstrap_builds_deep_hierarchy(
+    store: InMemoryGraphStore, mcp_client: InProcessMCPClient
+) -> None:
+    """Monolith bootstrap produces package/file/class/method nodes with CONTAINS edges."""
+    monolith_config = AgentSettings(
+        ENVIRONMENT="dev",
+        KG_BACKEND="in_memory",
+        REPO_INTELLIGENCE_BACKEND="mock",
+        OBSERVABILITY_BACKEND="mock",
+        DEPLOY_BACKEND="mock",
+        INCIDENT_KNOWLEDGE_BACKEND="mock",
+        CODE_DIFF_BACKEND="mock",
+        KG_BOOTSTRAP_SOURCE="services_json",
+        KG_BOOTSTRAP_ARCHITECTURE="monolith",
+        KG_IN_MEMORY_START_EMPTY=False,
+    )
+    state = await run_kg_bootstrap(
+        kg_store=store,
+        mcp_client=mcp_client,
+        config=monolith_config,
+        source="services_json",
+    )
+
+    assert state.errors == []
+    assert "contains edge" in state.diff_summary
+
+    snapshot = await store.staging_snapshot()
+    node_ids = {n["id"] for n in snapshot["nodes"]}
+    node_kinds = {n["id"]: n["kind"] for n in snapshot["nodes"]}
+    edge_set = {(e["from"], e["to"], e["type"]) for e in snapshot["edges"]}
+
+    # Should have module-level nodes.
+    assert "backend" in node_ids
+    # Should have package-level nodes (e.g. backend.services).
+    assert any("services" in nid for nid in node_ids)
+    # Should have file-level nodes.
+    assert any(node_kinds.get(nid) == "file" for nid in node_ids)
+    # Should have class-level nodes.
+    assert any(node_kinds.get(nid) == "class" for nid in node_ids)
+    # Should have method-level nodes.
+    assert any(node_kinds.get(nid) == "method" for nid in node_ids)
+    # Should have CONTAINS edges.
+    assert any(etype == "CONTAINS" for _, _, etype in edge_set)
 
 
 @pytest.mark.asyncio

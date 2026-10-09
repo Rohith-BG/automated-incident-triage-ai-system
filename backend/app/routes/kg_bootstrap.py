@@ -2,7 +2,7 @@
 FastAPI route handlers for the KG bootstrap agent trigger.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, status
 
@@ -31,8 +31,8 @@ router = APIRouter(prefix="/kg-bootstrap", tags=["KG Bootstrap"])
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def run_bootstrap(
-    payload: KgBootstrapRunRequest,
     background_tasks: BackgroundTasks,
+    payload: Optional[KgBootstrapRunRequest] = None,
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     service: KgBootstrapService = Depends(get_kg_bootstrap_service),
 ) -> Any:
@@ -46,13 +46,14 @@ async def run_bootstrap(
             "KG bootstrap is disabled in this environment "
             "(KG_BOOTSTRAP_ENABLED=false)."
         )
+    req = payload or KgBootstrapRunRequest()
     background_tasks.add_task(
         service.run_bootstrap,
         user_email=current_user.email,
-        source=payload.source,
-        org=payload.org,
-        repo=payload.repo,
-        architecture_type=payload.architecture_type,
+        source=req.source,
+        org=req.org,
+        repo=req.repo,
+        architecture_type=req.architecture_type,
     )
     return KgBootstrapRunResponse(status="started")
 

@@ -126,12 +126,15 @@ class RootCauseReportModel(Base):
         index=True,
     )
     root_cause: Mapped[str] = mapped_column(String(2000), nullable=False)
-    evidence_summary: Mapped[str] = mapped_column(String(4000), nullable=False)
     affected_services: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    raw_logs: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    raw_metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    observability_analysis: Mapped[str] = mapped_column(String(4000), nullable=False, default="")
+    code_diffs: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    past_resolutions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     remediation_steps: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
     uncertainty: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
-    model_used: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(default=utc_now_naive, nullable=False)
 
     # Relationships
@@ -143,11 +146,15 @@ class RootCauseReportModel(Base):
             "id": self.id,
             "incident_id": self.incident_id,
             "root_cause": self.root_cause,
-            "evidence_summary": self.evidence_summary,
             "affected_services": self.affected_services,
+            "raw_logs": self.raw_logs,
+            "raw_metrics": self.raw_metrics,
+            "observability_analysis": self.observability_analysis,
+            "code_diffs": self.code_diffs,
+            "past_resolutions": self.past_resolutions,
             "remediation_steps": self.remediation_steps,
             "confidence_score": self.confidence_score,
             "uncertainty": self.uncertainty,
-            "model_used": self.model_used,
             "created_at": self.created_at.isoformat(),
         }
+

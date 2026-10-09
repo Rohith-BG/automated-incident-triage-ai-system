@@ -73,8 +73,12 @@ class ReportResponse(BaseModel):
 
     id: str
     root_cause: str
-    evidence_summary: str
     affected_services: list[str]
+    raw_logs: dict = Field(default_factory=dict)
+    raw_metrics: dict = Field(default_factory=dict)
+    observability_analysis: str = ""
+    code_diffs: dict = Field(default_factory=dict)
+    past_resolutions: list[dict] = Field(default_factory=list)
     remediation_steps: list[str]
     confidence_score: float
     created_at: datetime
