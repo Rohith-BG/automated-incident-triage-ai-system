@@ -40,13 +40,13 @@ class KnowledgeGraphStore(Protocol):
     async def get_owner_team(
         self, service_id: str
     ) -> dict[str, str]:
-        """Return owner team info including oncall_slack channel."""
+        """Derive owner from Service node metadata (no Team nodes)."""
         ...
 
     async def get_historical_incidents(
         self, service_id: str
     ) -> list[dict[str, Any]]:
-        """Return past incidents for this service."""
+        """Return empty — historical incidents live in the DB."""
         ...
 
     async def get_all_services(self) -> list[str]:

@@ -62,6 +62,7 @@ class InMemoryGraphStore:
         # Staging graph for the KG bootstrap loop
         self._staging_nodes: dict[str, dict[str, Any]] = {}
         self._staging_edges: set[tuple[str, str]] = set()
+        self._staging_contains_edges: set[tuple[str, str]] = set()
 
     def _rebuild_dependents_map(self) -> None:
         """Rebuild reverse dependency index."""
@@ -227,6 +228,7 @@ class InMemoryGraphStore:
         nodes: dict[str, dict[str, Any]],
         edges: set[tuple[str, str]],
         mutation: dict[str, Any],
+        contains_edges: set[tuple[str, str]] | None = None,
     ) -> None:
         """Apply a single mutation dict to a scratch (staging) graph."""
         action = mutation.get("action")
@@ -239,6 +241,9 @@ class InMemoryGraphStore:
                 nodes[node_id] = dict(metadata)
         elif action == "add_dependency":
             edges.add((mutation["from"], mutation["to"]))
+        elif action == "add_contains":
+            target = contains_edges if contains_edges is not None else edges
+            target.add((mutation["from"], mutation["to"]))
         elif action == "remove_dependency":
             edges.discard((mutation["from"], mutation["to"]))
         elif action == "update_metadata":
@@ -253,6 +258,12 @@ class InMemoryGraphStore:
                 for src, dst in list(edges)
                 if src == node_id or dst == node_id
             )
+            if contains_edges is not None:
+                contains_edges.difference_update(
+                    (src, dst)
+                    for src, dst in list(contains_edges)
+                    if src == node_id or dst == node_id
+                )
 
     async def _staging_apply_mutations(
         self, mutations: list[dict[str, Any]]
@@ -263,7 +274,10 @@ class InMemoryGraphStore:
         for m in mutations:
             try:
                 self._apply_to_scratch(
-                    self._staging_nodes, self._staging_edges, m
+                    self._staging_nodes,
+                    self._staging_edges,
+                    m,
+                    self._staging_contains_edges,
                 )
                 applied += 1
             except Exception as e:
@@ -272,7 +286,11 @@ class InMemoryGraphStore:
 
     async def staging_has_content(self) -> bool:
         """True when the staging graph holds any nodes or edges."""
-        return bool(self._staging_nodes) or bool(self._staging_edges)
+        return (
+            bool(self._staging_nodes)
+            or bool(self._staging_edges)
+            or bool(self._staging_contains_edges)
+        )
 
     async def staging_replace(
         self, mutations: list[dict[str, Any]]
@@ -281,6 +299,7 @@ class InMemoryGraphStore:
         async with self._lock:
             self._staging_nodes.clear()
             self._staging_edges.clear()
+            self._staging_contains_edges.clear()
             return await self._staging_apply_mutations(mutations)
 
     async def staging_apply(
@@ -295,6 +314,7 @@ class InMemoryGraphStore:
         async with self._lock:
             self._staging_nodes.clear()
             self._staging_edges.clear()
+            self._staging_contains_edges.clear()
 
     async def staging_snapshot(self) -> dict[str, Any]:
         """Return the current staging graph for visualization."""
@@ -303,11 +323,15 @@ class InMemoryGraphStore:
                 {"id": node_id, "kind": props.get("kind", "service"), "properties": dict(props)}
                 for node_id, props in self._staging_nodes.items()
             ]
-            edges = [
+            dep_edges = [
                 {"from": src, "to": dst, "type": "DEPENDS_ON", "evidence": "staged"}
                 for src, dst in sorted(self._staging_edges)
             ]
-            return {"nodes": nodes, "edges": edges}
+            contains_edges = [
+                {"from": src, "to": dst, "type": "CONTAINS", "evidence": "staged"}
+                for src, dst in sorted(self._staging_contains_edges)
+            ]
+            return {"nodes": nodes, "edges": dep_edges + contains_edges}
 
     async def active_snapshot(self) -> dict[str, Any]:
         """Return the current active graph for visualization."""
@@ -340,9 +364,18 @@ class InMemoryGraphStore:
                     applied += 1
                 except Exception as e:
                     errors.append(str(e))
+            # Contains edges are also promoted as dependency
+            # links in the active graph (hierarchy).
+            for src, dst in self._staging_contains_edges:
+                try:
+                    self._add_dependency_locked(src, dst)
+                    applied += 1
+                except Exception as e:
+                    errors.append(str(e))
             self._rebuild_dependents_map()
             self._staging_nodes.clear()
             self._staging_edges.clear()
+            self._staging_contains_edges.clear()
             return {"applied": applied, "errors": errors}
 
     def _add_node_locked(self, node_id: str, metadata: dict[str, Any]) -> None:
