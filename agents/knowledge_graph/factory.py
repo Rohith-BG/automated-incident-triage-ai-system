@@ -57,7 +57,14 @@ def create_kg_store(
             password=config.NEO4J_PASSWORD,
         )
 
+    if config.KG_BACKEND == "neo4j_mcp" or config.NEO4J_MCP_URL is not None:
+        from agents.knowledge_graph.neo4j_mcp_store import (
+            Neo4jMCPStore,
+        )
+
+        return Neo4jMCPStore(config=config)
+
     raise ValueError(
         f"Unknown KG_BACKEND: '{config.KG_BACKEND}'. "
-        f"Expected 'in_memory' or 'neo4j'."
+        f"Expected 'in_memory', 'neo4j', or 'neo4j_mcp'."
     )

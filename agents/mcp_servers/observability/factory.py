@@ -23,7 +23,11 @@ def create_observability_provider(
             log_group_prefix=config.CLOUDWATCH_LOG_GROUP_PREFIX,
         )
 
+    if backend == "aws_mcp":
+        from .aws_mcp_provider import AWSRemoteMCPProvider
+        return AWSRemoteMCPProvider(config=config)
+
     raise ValueError(
         f"Unknown OBSERVABILITY_BACKEND: '{backend}'. "
-        "Expected 'mock' or 'cloudwatch'."
+        "Expected 'mock', 'cloudwatch', or 'aws_mcp'."
     )

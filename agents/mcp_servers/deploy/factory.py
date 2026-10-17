@@ -26,7 +26,16 @@ def create_deploy_provider(
             kg_store=create_kg_store(config),
         )
 
+    if backend == "github_mcp":
+        from .github_mcp_provider import GitHubMCPDeployProvider
+        from agents.knowledge_graph.factory import create_kg_store
+
+        return GitHubMCPDeployProvider(
+            config=config,
+            kg_store=create_kg_store(config),
+        )
+
     raise ValueError(
         f"Unknown DEPLOY_BACKEND: '{backend}'. "
-        "Expected 'mock' or 'github'."
+        "Expected 'mock', 'github', or 'github_mcp'."
     )
