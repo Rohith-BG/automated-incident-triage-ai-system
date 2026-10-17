@@ -28,14 +28,14 @@ class AgentSettings(BaseSettings):
     ENVIRONMENT: Literal["dev", "prod"] = "dev"
 
     # ── Swappable-component selectors (§4 of AGENTS.md) ─
-    KG_BACKEND: Literal["in_memory", "neo4j"] = "in_memory"
-    OBSERVABILITY_BACKEND: Literal["mock", "cloudwatch"] = "mock"
-    DEPLOY_BACKEND: Literal["mock", "github"] = "mock"
+    KG_BACKEND: Literal["in_memory", "neo4j", "neo4j_mcp"] = "neo4j_mcp"
+    OBSERVABILITY_BACKEND: Literal["mock", "cloudwatch", "aws_mcp"] = "mock"
+    DEPLOY_BACKEND: Literal["mock", "github", "github_mcp", "aws_mcp"] = "github_mcp"
     INCIDENT_KNOWLEDGE_BACKEND: Literal["mock", "db"] = "mock"
-    CODE_DIFF_BACKEND: Literal["mock", "github"] = "mock"
+    CODE_DIFF_BACKEND: Literal["mock", "github", "github_mcp"] = "github_mcp"
     REPO_INTELLIGENCE_BACKEND: Literal[
-        "mock", "github"
-    ] = "mock"
+        "mock", "github", "github_mcp"
+    ] = "github_mcp"
     LLM_PROVIDER: Literal[
         "google", "openai", "anthropic", "local"
     ] = "google"
@@ -43,6 +43,13 @@ class AgentSettings(BaseSettings):
         "console", "slack"
     ] = "console"
     TICKET_BACKEND: Literal["noop", "jira"] = "noop"
+
+    # ── Remote MCP Endpoints ──────────────────────────────
+    MCP_TRANSPORT: Literal["in_process", "remote"] = "in_process"
+    GITHUB_MCP_URL: str = "https://api.githubcopilot.com/mcp/"
+    AWS_MCP_URL_TEMPLATE: str = "https://aws-mcp.{region}.api.aws/mcp"
+    NEO4J_MCP_URL: Optional[str] = None
+    NEO4J_MCP_TOKEN: Optional[str] = None
 
     # ── LLM ──────────────────────────────────────────────
     GOOGLE_API_KEY: Optional[str] = None
@@ -132,6 +139,18 @@ class AgentSettings(BaseSettings):
             )
         return v
 
+    @field_validator("NEO4J_MCP_URL")
+    @classmethod
+    def validate_neo4j_mcp_url(cls, v: str | None, info) -> str | None:
+        """NEO4J_MCP_URL required when KG_BACKEND is neo4j_mcp."""
+        kg_backend = info.data.get("KG_BACKEND", "in_memory")
+        if kg_backend == "neo4j_mcp" and not v:
+            raise ValueError(
+                "NEO4J_MCP_URL is required when KG_BACKEND='neo4j_mcp'. "
+                "Set NEO4J_MCP_URL=https://<INSTANCE_ID>.mcp-instances.neo4j.io"
+            )
+        return v
+
     # ── Convenience properties ───────────────────────────
 
     @property
@@ -153,6 +172,16 @@ class AgentSettings(BaseSettings):
     def uses_mock_observability(self) -> bool:
         """True when observability source is mock data."""
         return self.OBSERVABILITY_BACKEND == "mock"
+
+    @property
+    def aws_mcp_url(self) -> str:
+        """Construct AWS regional MCP endpoint URL."""
+        return self.AWS_MCP_URL_TEMPLATE.format(region=self.AWS_REGION)
+
+    @property
+    def uses_remote_mcp(self) -> bool:
+        """True when remote MCP transport is selected."""
+        return self.MCP_TRANSPORT == "remote"
 
 
 # Singleton — import this everywhere in agents/

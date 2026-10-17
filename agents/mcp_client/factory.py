@@ -24,8 +24,18 @@ def create_mcp_client(
     Note:
         Caller must ``await client.initialize()`` before use.
     """
-    # MVP: always in-process.  Future: check an env var
-    # like MCP_MODE=protocol to use network transport.
+    if (
+        config.uses_remote_mcp
+        or config.OBSERVABILITY_BACKEND == "aws_mcp"
+        or config.DEPLOY_BACKEND == "github_mcp"
+        or config.CODE_DIFF_BACKEND == "github_mcp"
+        or config.REPO_INTELLIGENCE_BACKEND == "github_mcp"
+        or config.NEO4J_MCP_URL is not None
+    ):
+        from agents.mcp_client.remote_client import RemoteMCPClient
+
+        return RemoteMCPClient(config)
+
     from agents.mcp_client.client import InProcessMCPClient
 
     return InProcessMCPClient(config)
