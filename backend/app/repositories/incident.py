@@ -89,6 +89,40 @@ class IncidentRepository:
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def find_resolved_by_service(
+        self,
+        service_id: str,
+        limit: int = 10,
+    ) -> list[Incident]:
+        """Find resolved/completed incidents for a service.
+
+        Used by the KG store to provide historical incident context
+        during root-cause investigations.
+
+        Args:
+            service_id: Service to query.
+            limit: Max results.
+
+        Returns:
+            List of resolved/completed Incidents, newest first.
+        """
+        stmt = (
+            select(Incident)
+            .where(
+                Incident.service_id == service_id,
+                Incident.status.in_(
+                    [
+                        IncidentStatus.RESOLVED.value,
+                        IncidentStatus.COMPLETED.value,
+                    ]
+                ),
+            )
+            .order_by(Incident.updated_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     # ── Cursor helpers ────────────────────────────────────
 
     @staticmethod
